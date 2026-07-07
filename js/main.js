@@ -81,11 +81,13 @@ let depthText;
 let depthSegLabels = []; // 三段深度指示条文字对象
 let enemyContainer;   // 敌人区域容器
 let enemySprite;      // 敌人立绘
+let enemyNameBg;      // 敌人名称背景板
 let enemyNameText;
 let enemyHpBarBg;
 let enemyHpBarFill;
 let enemyHpText;
 let enemyShieldText;
+let enemyIntentBg;
 let enemyIntentText;
 
 let playerContainer;
@@ -129,22 +131,25 @@ function create() {
   createPlayerUI(this);
 
   /* ---------- 阶段提示（玩家框下方） ---------- */
-  txtPhase = this.add.text(W / 2, 305, '', {
+  txtPhase = this.add.text(W / 2, 368, '', {
     fontSize: '16px', fontFamily: '"Courier New", monospace',
-    color: '#ffaa44',
+    color: '#ffaa44', fontStyle: 'bold',
+    stroke: '#000000', strokeThickness: 3,
   }).setOrigin(0.5);
 
   /* ---------- 日志（阶段提示下方，5行高度约 85px） ---------- */
-  txtLog = this.add.text(20, 330, '', {
+  txtLog = this.add.text(20, 390, '', {
     fontSize: '13px', fontFamily: '"Courier New", monospace',
-    color: '#cc8866', lineSpacing: 4,
+    color: '#ffccaa', lineSpacing: 4,
     wordWrap: { width: W - 40 },
+    stroke: '#000000', strokeThickness: 2,
   });
 
   /* ---------- 牌库信息（日志下方） ---------- */
-  txtPileInfo = this.add.text(20, 395, '', {
+  txtPileInfo = this.add.text(20, 455, '', {
     fontSize: '13px', fontFamily: '"Courier New", monospace',
-    color: '#aa7755',
+    color: '#ffbb88', fontStyle: 'bold',
+    stroke: '#000000', strokeThickness: 2,
   });
 
   /* ---------- 结束回合按钮 ---------- */
@@ -206,6 +211,7 @@ function updateDepthUI(scene) {
   depthText = scene.add.text(16, barH / 2, '', {
     fontSize: '16px', fontFamily: '"Courier New", monospace',
     color: '#ffcc88', fontStyle: 'bold',
+    stroke: '#000000', strokeThickness: 2,
   }).setOrigin(0, 0.5);
 
   // 清理旧的段标签
@@ -248,6 +254,7 @@ function updateDepthUI(scene) {
       fontSize: '12px', fontFamily: '"Courier New", monospace',
       color: isActive ? '#ffdd99' : (isPast ? '#886655' : '#55332a'),
       fontStyle: isActive ? 'bold' : 'normal',
+      stroke: '#000000', strokeThickness: 2,
     }).setOrigin(0.5);
     depthSegLabels.push(segLabel);
   }
@@ -270,10 +277,15 @@ function createEnemyUI(scene) {
     .setAlpha(0);
   enemyContainer.add(enemySprite);
 
+  // 敌人名称背景板
+  enemyNameBg = scene.add.graphics();
+  enemyContainer.add(enemyNameBg);
+
   // 敌人名称
   enemyNameText = scene.add.text(0, 0, '', {
     fontSize: '18px', fontFamily: '"Courier New", monospace',
     color: '#ff6666', fontStyle: 'bold',
+    stroke: '#000000', strokeThickness: 3,
   }).setOrigin(0.5);
   enemyContainer.add(enemyNameText);
 
@@ -288,21 +300,28 @@ function createEnemyUI(scene) {
   // HP 数值文字
   enemyHpText = scene.add.text(0, 0, '', {
     fontSize: '14px', fontFamily: '"Courier New", monospace',
-    color: '#ffffff',
+    color: '#ffffff', fontStyle: 'bold',
+    stroke: '#000000', strokeThickness: 3,
   }).setOrigin(0.5);
   enemyContainer.add(enemyHpText);
 
   // 护盾文字（暖金）
   enemyShieldText = scene.add.text(0, 0, '', {
     fontSize: '13px', fontFamily: '"Courier New", monospace',
-    color: '#ffaa44',
+    color: '#ffaa44', fontStyle: 'bold',
+    stroke: '#000000', strokeThickness: 2,
   }).setOrigin(0.5);
   enemyContainer.add(enemyShieldText);
+
+  // 意图文字背景板
+  enemyIntentBg = scene.add.graphics();
+  enemyContainer.add(enemyIntentBg);
 
   // 意图文字（炽橙）
   enemyIntentText = scene.add.text(0, 0, '', {
     fontSize: '14px', fontFamily: '"Courier New", monospace',
-    color: '#ff8844',
+    color: '#ff8844', fontStyle: 'bold',
+    stroke: '#000000', strokeThickness: 3,
   }).setOrigin(0.5);
   enemyContainer.add(enemyIntentText);
 
@@ -313,11 +332,12 @@ function updateEnemyUI(scene) {
   if (!GameState.enemy) return;
 
   const cx = W / 2;
-  const spriteY = 95;
-  const nameY = 30;
-  const hpBarY = 165;
-  const hpBarW = 220;
-  const hpBarH = 14;
+  const spriteY = 115;
+  const spriteHeight = 170;
+  const nameY = 24;
+  const hpBarY = 210;
+  const hpBarW = 240;
+  const hpBarH = 16;
   const hpBarX = cx - hpBarW / 2;
 
   // 敌人立绘
@@ -325,12 +345,19 @@ function updateEnemyUI(scene) {
   if (scene.textures.exists(spriteKey)) {
     enemySprite.setTexture(spriteKey);
     enemySprite.setAlpha(1);
-    // 统一高度为 130，宽度按原图比例缩放
-    enemySprite.setDisplaySize(130 * (enemySprite.width / enemySprite.height), 130);
+    // 统一高度为 spriteHeight，宽度按原图比例缩放
+    const ratio = enemySprite.width / enemySprite.height;
+    enemySprite.setDisplaySize(spriteHeight * ratio, spriteHeight);
     enemySprite.setPosition(cx, spriteY);
   } else {
     enemySprite.setAlpha(0);
   }
+
+  // 敌人名称背景板
+  enemyNameBg.clear();
+  const nameBounds = enemyNameText.getBounds ? { width: 260 } : { width: 260 };
+  enemyNameBg.fillStyle(0x000000, 0.5);
+  enemyNameBg.fillRoundedRect(cx - 135, nameY - 14, 270, 28, 6);
 
   // 敌人名（炽热橙红）
   enemyNameText.setPosition(cx, nameY);
@@ -359,9 +386,15 @@ function updateEnemyUI(scene) {
     enemyShieldText.setText('');
   }
 
+  // 意图文字背景板
+  enemyIntentBg.clear();
+  const intentStr = `⚡ ${GameState.enemy.getIntentDescription()}`;
+  enemyIntentBg.fillStyle(0x000000, 0.5);
+  enemyIntentBg.fillRoundedRect(cx - 140, hpBarY + hpBarH + 28, 280, 26, 6);
+
   // 意图
-  enemyIntentText.setPosition(cx, hpBarY + hpBarH + 40);
-  enemyIntentText.setText(`⚡ ${GameState.enemy.getIntentDescription()}`);
+  enemyIntentText.setPosition(cx, hpBarY + hpBarH + 41);
+  enemyIntentText.setText(intentStr);
 }
 
 /** 敌人受击震屏动画 */
@@ -386,10 +419,10 @@ function shakeEnemyUI(scene) {
   enemyHpBarFill.clear();
   enemyHpBarFill.fillStyle(0xff0000, 0.9);
   const cx = W / 2;
-  const hpBarW = 220;
-  const hpBarH = 14;
+  const hpBarW = 240;
+  const hpBarH = 16;
   const hpBarX = cx - hpBarW / 2;
-  const hpBarY = 165;
+  const hpBarY = 210;
   enemyHpBarFill.fillRoundedRect(hpBarX, hpBarY, hpBarW, hpBarH, 4);
 
   scene.time.delayedCall(150, () => {
@@ -405,28 +438,29 @@ function createPlayerUI(scene) {
 
   // ---- 背景框（仅创建一次） ----
   const startX = 20;
-  const startY = 230;
+  const startY = 290;
 
   const bgBox = scene.add.graphics();
   bgBox.fillStyle(0x1a0c08, 0.9);
-  bgBox.fillRoundedRect(startX, startY, 400, 66, 6);
+  bgBox.fillRoundedRect(startX, startY, 400, 70, 6);
   bgBox.lineStyle(1, 0xaa4020, 0.6);
-  bgBox.strokeRoundedRect(startX, startY, 400, 66, 6);
+  bgBox.strokeRoundedRect(startX, startY, 400, 70, 6);
   // 高光
   bgBox.lineStyle(1, 0xff6633, 0.1);
-  bgBox.strokeRoundedRect(startX + 1, startY + 1, 398, 64, 5);
+  bgBox.strokeRoundedRect(startX + 1, startY + 1, 398, 68, 5);
   playerContainer.add(bgBox);
 
   // ---- 玩家头像 ----
-  const avatar = scene.add.image(startX + 36, startY + 33, 'player_avatar')
-    .setDisplaySize(56, 56)
+  const avatar = scene.add.image(startX + 38, startY + 35, 'player_avatar')
+    .setDisplaySize(62, 62)
     .setOrigin(0.5);
   playerContainer.add(avatar);
 
   // ---- 名称标签（仅创建一次） ----
-  const nameTxt = scene.add.text(startX + 74, startY + 6, `◤ ${GameState.player.name}`, {
+  const nameTxt = scene.add.text(startX + 78, startY + 8, `◤ ${GameState.player.name}`, {
     fontSize: '14px', fontFamily: '"Courier New", monospace',
     color: '#ff8844', fontStyle: 'bold',
+    stroke: '#000000', strokeThickness: 2,
   });
   playerContainer.add(nameTxt);
 
@@ -441,21 +475,24 @@ function createPlayerUI(scene) {
   // HP 数值文字
   playerHpText = scene.add.text(0, 0, '', {
     fontSize: '14px', fontFamily: '"Courier New", monospace',
-    color: '#ffffff',
+    color: '#ffffff', fontStyle: 'bold',
+    stroke: '#000000', strokeThickness: 2,
   }).setOrigin(0, 0.5);
   playerContainer.add(playerHpText);
 
   // 护盾文字（暖金）
   playerShieldText = scene.add.text(0, 0, '', {
     fontSize: '13px', fontFamily: '"Courier New", monospace',
-    color: '#ffaa44',
+    color: '#ffaa44', fontStyle: 'bold',
+    stroke: '#000000', strokeThickness: 2,
   }).setOrigin(0, 0.5);
   playerContainer.add(playerShieldText);
 
   // 电量文字（琥珀色）
   playerBatteryText = scene.add.text(0, 0, '', {
     fontSize: '13px', fontFamily: '"Courier New", monospace',
-    color: '#ffcc44',
+    color: '#ffcc44', fontStyle: 'bold',
+    stroke: '#000000', strokeThickness: 2,
   }).setOrigin(0, 0.5);
   playerContainer.add(playerBatteryText);
 
@@ -467,10 +504,10 @@ function updatePlayerUI(scene) {
   playerHpBarFill.clear();
 
   const startX = 20;
-  const startY = 230;
+  const startY = 290;
 
   // HP 条背景
-  const hpBarW = 180;
+  const hpBarW = 190;
   const hpBarH = 14;
   const hpBarX = startX + 80;
   const hpBarY = startY + 8;
@@ -486,14 +523,14 @@ function updatePlayerUI(scene) {
   playerHpText.setPosition(hpBarX + hpBarW + 10, hpBarY + hpBarH / 2);
   playerHpText.setText(`${GameState.player.hp}/${GameState.player.maxHp}`);
 
-  // 护盾（与 HP 条同行右侧）
+  // 护盾（HP 条下方，头像右侧）
   const shieldStr = GameState.player.shield > 0 ? `🛡 护盾 ${GameState.player.shield}` : '';
-  playerShieldText.setPosition(startX + 8, startY + 32);
+  playerShieldText.setPosition(hpBarX, startY + 32);
   playerShieldText.setText(shieldStr);
 
-  // 电量（与护盾同行，护盾右侧）
+  // 电量（HP 条下方右侧）
   const battStr = `⚡ ${'█'.repeat(GameState.player.battery)}${'░'.repeat(GameState.player.maxBattery - GameState.player.battery)} (${GameState.player.battery}/${GameState.player.maxBattery})`;
-  playerBatteryText.setPosition(startX + 8 + (shieldStr ? 130 : 0), startY + 32);
+  playerBatteryText.setPosition(hpBarX + 120, startY + 32);
   playerBatteryText.setText(battStr);
 }
 
@@ -517,8 +554,8 @@ function shakePlayerUI(scene) {
   playerHpBarFill.clear();
   playerHpBarFill.fillStyle(0xff0000, 0.9);
   const startX = 20;
-  const startY = 230;
-  const hpBarW = 180;
+  const startY = 290;
+  const hpBarW = 190;
   const hpBarH = 14;
   const hpBarX = startX + 80;
   const hpBarY = startY + 8;
@@ -566,7 +603,7 @@ function spawnFloatingText(scene, target, text, color, offsetY) {
 
   if (target === 'player') {
     targetX = 220;
-    targetY = 230 + (offsetY || 0);
+    targetY = 290 + (offsetY || 0);
   } else {
     targetX = W / 2;
     targetY = 95 + (offsetY || 0);
@@ -639,6 +676,7 @@ function createCardGraphics(scene, x, y, w, h, card, index) {
     fontSize: '11px', fontFamily: '"Courier New", monospace',
     color: canPlay ? '#ffffff' : '#667788',
     fontStyle: 'bold',
+    stroke: '#000000', strokeThickness: 2,
   }).setOrigin(0.5);
   container.add(nameTxt);
 
@@ -656,14 +694,16 @@ function createCardGraphics(scene, x, y, w, h, card, index) {
   const costTxt = scene.add.text(16, 40, `${card.cost}`, {
     fontSize: '13px', fontFamily: '"Courier New", monospace',
     color: '#ffffff', fontStyle: 'bold',
+    stroke: '#000000', strokeThickness: 2,
   }).setOrigin(0.5);
   container.add(costTxt);
 
   // — 描述 —
-  const descTxt = scene.add.text(32, 32, card.desc, {
-    fontSize: '12px', fontFamily: '"Courier New", monospace',
-    color: canPlay ? '#aaccdd' : '#556677',
+  const descTxt = scene.add.text(32, 44, card.desc, {
+    fontSize: '11px', fontFamily: '"Courier New", monospace',
+    color: canPlay ? '#e0f0ff' : '#556677',
     wordWrap: { width: w - 40 },
+    stroke: '#000000', strokeThickness: 2,
   });
   container.add(descTxt);
 
