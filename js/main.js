@@ -15,9 +15,39 @@ const game = new Phaser.Game({
   height: H,
   parent: 'game-container',
   backgroundColor: '#1a0808',
-  scene: { create, update },
+  scene: { preload, create, update },
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
 });
+
+/* ============================================================
+ * 资源预加载
+ * ============================================================ */
+function preload() {
+  const scene = this;
+
+  // 背景
+  scene.load.image('bg-surface', 'assets/backgrounds/bg_surface.jpg');
+  scene.load.image('bg-shallow', 'assets/backgrounds/bg_shallow.jpg');
+  scene.load.image('bg-core', 'assets/backgrounds/bg_core.jpg');
+  scene.load.image('bg-transition', 'assets/backgrounds/bg_transition.png');
+
+  // 敌人
+  scene.load.image('enemy_mars_leech', 'assets/enemies/enemy_mars_leech.png');
+  scene.load.image('enemy_dune_stalker', 'assets/enemies/enemy_dune_stalker.png');
+  scene.load.image('enemy_red_crawler', 'assets/enemies/enemy_red_crawler.png');
+  scene.load.image('enemy_crystal_parasite', 'assets/enemies/enemy_crystal_parasite.png');
+  scene.load.image('enemy_deep_lurker', 'assets/enemies/enemy_deep_lurker.png');
+  scene.load.image('enemy_mars_devourer', 'assets/enemies/enemy_mars_devourer.png');
+
+  // 玩家
+  scene.load.image('player_astronaut', 'assets/player/player_astronaut.png');
+  scene.load.image('player_avatar', 'assets/player/player_avatar.png');
+
+  // UI
+  scene.load.image('ui_card_base', 'assets/ui/ui_card_base.png');
+  scene.load.image('ui_btn_endturn', 'assets/ui/ui_btn_endturn.png');
+  scene.load.image('ui_bar_bg', 'assets/ui/ui_bar_bg.png');
+}
 
 /* ============================================================
  * 全局状态（收敛到 GameState，便于调试、存档、扩展）
@@ -45,11 +75,12 @@ let endTurnBtn = null;
 /* ============================================================
  * UI 组件引用
  * ============================================================ */
+let backgroundImage;  // 当前背景图
 let depthUI;          // 深度指示器 Graphics + Text
 let depthText;
 let depthSegLabels = []; // 三段深度指示条文字对象
 let enemyContainer;   // 敌人区域容器
-let enemyGraphics;
+let enemySprite;      // 敌人立绘
 let enemyNameText;
 let enemyHpBarBg;
 let enemyHpBarFill;
@@ -85,8 +116,8 @@ function create() {
 
   initLevel(GameState.depthLevel);
 
-  /* ---------- 绘制持久背景 ---------- */
-  drawBackground(this);
+  /* ---------- 设置当前深度背景图 ---------- */
+  setBackgroundForLevel(this, GameState.depthLevel);
 
   /* ---------- 深度指示器 ---------- */
   createDepthUI(this);
@@ -98,20 +129,20 @@ function create() {
   createPlayerUI(this);
 
   /* ---------- 阶段提示（玩家框下方） ---------- */
-  txtPhase = this.add.text(W / 2, 252, '', {
+  txtPhase = this.add.text(W / 2, 305, '', {
     fontSize: '16px', fontFamily: '"Courier New", monospace',
     color: '#ffaa44',
   }).setOrigin(0.5);
 
   /* ---------- 日志（阶段提示下方，5行高度约 85px） ---------- */
-  txtLog = this.add.text(20, 280, '', {
+  txtLog = this.add.text(20, 330, '', {
     fontSize: '13px', fontFamily: '"Courier New", monospace',
     color: '#cc8866', lineSpacing: 4,
     wordWrap: { width: W - 40 },
   });
 
   /* ---------- 牌库信息（日志下方） ---------- */
-  txtPileInfo = this.add.text(20, 375, '', {
+  txtPileInfo = this.add.text(20, 395, '', {
     fontSize: '13px', fontFamily: '"Courier New", monospace',
     color: '#aa7755',
   });
@@ -127,46 +158,20 @@ function create() {
 }
 
 /* ============================================================
- * 背景绘制
+ * 背景图管理
  * ============================================================ */
-function drawBackground(scene) {
-  const g = scene.add.graphics();
+function setBackgroundForLevel(scene, levelIndex) {
+  const bgKeys = ['bg-surface', 'bg-shallow', 'bg-core'];
+  const bgKey = bgKeys[levelIndex] || bgKeys[0];
 
-  // 暗锈红渐变背景
-  g.fillStyle(0x1a0808, 1);
-  g.fillRect(0, 0, W, H);
+  if (backgroundImage) {
+    backgroundImage.destroy();
+  }
 
-  // 底部更深的锈色晕染
-  g.fillStyle(0x120404, 0.6);
-  g.fillRect(0, H - 180, W, 180);
-
-  // 顶部金属暗色渐变
-  g.fillStyle(0x220e0a, 0.4);
-  g.fillRect(0, 0, W, 80);
-
-  // 洞穴纹理网格线（暖色）
-  g.lineStyle(1, 0x3a1a10, 0.3);
-  for (let x = 0; x < W; x += 40) { g.lineBetween(x, 0, x, H); }
-  for (let y = 0; y < H; y += 40) { g.lineBetween(0, y, W, y); }
-
-  // 额外的粗网格纹理
-  g.lineStyle(1, 0x2a1008, 0.2);
-  for (let x = 0; x < W; x += 120) { g.lineBetween(x, 0, x, H); }
-  for (let y = 0; y < H; y += 120) { g.lineBetween(0, y, W, y); }
-
-  // 分隔线（金属铜色）
-  g.lineStyle(2, 0x6a2a18, 0.6);
-  g.lineBetween(0, 35, W, 35);   // 深度下方
-  g.lineBetween(0, 155, W, 155); // 敌人下方
-  g.lineBetween(0, 250, W, 250); // 玩家下方
-  g.lineBetween(0, 395, W, 395); // 牌库下方
-
-  // 分隔线发光光晕
-  g.lineStyle(1, 0xaa4020, 0.15);
-  g.lineBetween(0, 36, W, 36);
-  g.lineBetween(0, 156, W, 156);
-  g.lineBetween(0, 251, W, 251);
-  g.lineBetween(0, 396, W, 396);
+  backgroundImage = scene.add.image(0, 0, bgKey)
+    .setOrigin(0)
+    .setDisplaySize(W, H)
+    .setDepth(-10);
 }
 
 /* ============================================================
@@ -254,14 +259,16 @@ function updateDepthUI(scene) {
 }
 
 /* ============================================================
- * 敌人 UI（Graphics 绘制的彩色方块）
+ * 敌人 UI（敌人立绘 + 信息条）
  * ============================================================ */
 function createEnemyUI(scene) {
   enemyContainer = scene.add.container(0, 0);
 
-  const g = scene.add.graphics();
-  enemyGraphics = g;
-  enemyContainer.add(g);
+  // 敌人立绘（初始占位，纹理在 updateEnemyUI 中设置）
+  enemySprite = scene.add.image(0, 0, 'enemy_mars_leech')
+    .setOrigin(0.5)
+    .setAlpha(0);
+  enemyContainer.add(enemySprite);
 
   // 敌人名称
   enemyNameText = scene.add.text(0, 0, '', {
@@ -304,48 +311,32 @@ function createEnemyUI(scene) {
 
 function updateEnemyUI(scene) {
   if (!GameState.enemy) return;
-  enemyGraphics.clear();
 
   const cx = W / 2;
-  const boxW = 280;
-  const boxH = 100;
-  const boxX = cx - boxW / 2;
-  const boxY = 42;
+  const spriteY = 95;
+  const nameY = 30;
+  const hpBarY = 165;
+  const hpBarW = 220;
+  const hpBarH = 14;
+  const hpBarX = cx - hpBarW / 2;
 
-  // 敌人方块背景（暗锈金属）
-  enemyGraphics.fillStyle(0x1a0c08, 0.95);
-  enemyGraphics.fillRoundedRect(boxX, boxY, boxW, boxH, 8);
-
-  // 顶部色条（铁锈橙红）
-  enemyGraphics.fillStyle(0xaa3018, 0.85);
-  enemyGraphics.fillRoundedRect(boxX, boxY, boxW, 22, { tl: 8, tr: 8, bl: 0, br: 0 });
-
-  // 边框（金属铜色）
-  enemyGraphics.lineStyle(2, 0xcc4420, 0.7);
-  enemyGraphics.strokeRoundedRect(boxX, boxY, boxW, boxH, 8);
-
-  // 顶部边框高光
-  enemyGraphics.lineStyle(1, 0xff6633, 0.25);
-  enemyGraphics.strokeRoundedRect(boxX + 2, boxY + 2, boxW - 4, boxH - 4, 6);
-
-  // 防御指示 — 护盾高亮边框（暖色）
-  if (GameState.enemy.shield > 0) {
-    enemyGraphics.lineStyle(3, 0xff8833, 0.7);
-    enemyGraphics.strokeRoundedRect(boxX - 2, boxY - 2, boxW + 4, boxH + 4, 10);
-    enemyGraphics.lineStyle(1, 0xffbb66, 0.2);
-    enemyGraphics.strokeRoundedRect(boxX - 1, boxY - 1, boxW + 2, boxH + 2, 9);
+  // 敌人立绘
+  const spriteKey = GameState.enemy.sprite || 'enemy_mars_leech';
+  if (scene.textures.exists(spriteKey)) {
+    enemySprite.setTexture(spriteKey);
+    enemySprite.setAlpha(1);
+    // 统一高度为 130，宽度按原图比例缩放
+    enemySprite.setDisplaySize(130 * (enemySprite.width / enemySprite.height), 130);
+    enemySprite.setPosition(cx, spriteY);
+  } else {
+    enemySprite.setAlpha(0);
   }
 
   // 敌人名（炽热橙红）
-  enemyNameText.setPosition(cx, boxY + 12);
+  enemyNameText.setPosition(cx, nameY);
   enemyNameText.setText(`◥ ${GameState.enemy.name}`);
 
   // HP 条背景
-  const hpBarW = 200;
-  const hpBarH = 14;
-  const hpBarX = cx - hpBarW / 2;
-  const hpBarY = boxY + 34;
-
   enemyHpBarBg.clear();
   enemyHpBarBg.fillStyle(0x2a1410, 1);
   enemyHpBarBg.fillRoundedRect(hpBarX, hpBarY, hpBarW, hpBarH, 4);
@@ -362,14 +353,14 @@ function updateEnemyUI(scene) {
 
   // 护盾文字
   if (GameState.enemy.shield > 0) {
-    enemyShieldText.setPosition(cx, hpBarY + hpBarH + 14);
+    enemyShieldText.setPosition(cx, hpBarY + hpBarH + 16);
     enemyShieldText.setText(`🛡 护盾 ${GameState.enemy.shield}`);
   } else {
     enemyShieldText.setText('');
   }
 
   // 意图
-  enemyIntentText.setPosition(cx, boxY + boxH - 12);
+  enemyIntentText.setPosition(cx, hpBarY + hpBarH + 40);
   enemyIntentText.setText(`⚡ ${GameState.enemy.getIntentDescription()}`);
 }
 
@@ -395,11 +386,10 @@ function shakeEnemyUI(scene) {
   enemyHpBarFill.clear();
   enemyHpBarFill.fillStyle(0xff0000, 0.9);
   const cx = W / 2;
-  const hpBarW = 200;
+  const hpBarW = 220;
   const hpBarH = 14;
   const hpBarX = cx - hpBarW / 2;
-  const boxY = 42;
-  const hpBarY = boxY + 34;
+  const hpBarY = 165;
   enemyHpBarFill.fillRoundedRect(hpBarX, hpBarY, hpBarW, hpBarH, 4);
 
   scene.time.delayedCall(150, () => {
@@ -415,7 +405,7 @@ function createPlayerUI(scene) {
 
   // ---- 背景框（仅创建一次） ----
   const startX = 20;
-  const startY = 170;
+  const startY = 230;
 
   const bgBox = scene.add.graphics();
   bgBox.fillStyle(0x1a0c08, 0.9);
@@ -427,8 +417,14 @@ function createPlayerUI(scene) {
   bgBox.strokeRoundedRect(startX + 1, startY + 1, 398, 64, 5);
   playerContainer.add(bgBox);
 
+  // ---- 玩家头像 ----
+  const avatar = scene.add.image(startX + 36, startY + 33, 'player_avatar')
+    .setDisplaySize(56, 56)
+    .setOrigin(0.5);
+  playerContainer.add(avatar);
+
   // ---- 名称标签（仅创建一次） ----
-  const nameTxt = scene.add.text(startX + 8, startY + 6, `◤ ${GameState.player.name}`, {
+  const nameTxt = scene.add.text(startX + 74, startY + 6, `◤ ${GameState.player.name}`, {
     fontSize: '14px', fontFamily: '"Courier New", monospace',
     color: '#ff8844', fontStyle: 'bold',
   });
@@ -471,7 +467,7 @@ function updatePlayerUI(scene) {
   playerHpBarFill.clear();
 
   const startX = 20;
-  const startY = 170;
+  const startY = 230;
 
   // HP 条背景
   const hpBarW = 180;
@@ -521,7 +517,7 @@ function shakePlayerUI(scene) {
   playerHpBarFill.clear();
   playerHpBarFill.fillStyle(0xff0000, 0.9);
   const startX = 20;
-  const startY = 170;
+  const startY = 230;
   const hpBarW = 180;
   const hpBarH = 14;
   const hpBarX = startX + 80;
@@ -570,10 +566,10 @@ function spawnFloatingText(scene, target, text, color, offsetY) {
 
   if (target === 'player') {
     targetX = 220;
-    targetY = 170 + (offsetY || 0);
+    targetY = 230 + (offsetY || 0);
   } else {
     targetX = W / 2;
-    targetY = 42 + (offsetY || 0);
+    targetY = 95 + (offsetY || 0);
   }
 
   const ft = scene.add.text(targetX, targetY - 10, text, {
@@ -626,23 +622,20 @@ function createCardGraphics(scene, x, y, w, h, card, index) {
   const canPlay = GameState.player.canPlay(card.cost);
   const alpha = canPlay ? 1.0 : 0.45;
 
-  // — 卡牌底框 —
-  const bg = scene.add.graphics();
-  bg.fillStyle(0x1a0c08, 0.95 * alpha);
-  bg.fillRoundedRect(0, 0, w, h, 8);
-
-  // — 顶部类型色条 —
-  bg.fillStyle(card.color, 0.85 * alpha);
-  bg.fillRoundedRect(2, 2, w - 4, 20, { tl: 6, tr: 6, bl: 0, br: 0 });
-
-  // — 边框（金属铜色） —
-  bg.lineStyle(2, canPlay ? 0xdd6633 : 0x4a2818, 0.8 * alpha);
-  bg.strokeRoundedRect(0, 0, w, h, 8);
-
+  // — 卡牌底图（美术资源） —
+  const bg = scene.add.image(w / 2, h / 2, 'ui_card_base')
+    .setDisplaySize(w, h)
+    .setAlpha(alpha);
   container.add(bg);
 
+  // — 顶部类型色条 —
+  const topBar = scene.add.graphics();
+  topBar.fillStyle(card.color, 0.7 * alpha);
+  topBar.fillRoundedRect(6, 6, w - 12, 18, { tl: 4, tr: 4, bl: 0, br: 0 });
+  container.add(topBar);
+
   // — 卡牌名（在色条内） —
-  const nameTxt = scene.add.text(w / 2, 12, card.name, {
+  const nameTxt = scene.add.text(w / 2, 15, card.name, {
     fontSize: '11px', fontFamily: '"Courier New", monospace',
     color: canPlay ? '#ffffff' : '#667788',
     fontStyle: 'bold',
@@ -655,19 +648,19 @@ function createCardGraphics(scene, x, y, w, h, card, index) {
 
   const costBg = scene.add.graphics();
   costBg.fillStyle(0x000000, 0.6);
-  costBg.fillCircle(16, 38, 10);
+  costBg.fillCircle(16, 40, 10);
   costBg.fillStyle(costColor, 0.9 * alpha);
-  costBg.fillCircle(16, 38, 8);
+  costBg.fillCircle(16, 40, 8);
   container.add(costBg);
 
-  const costTxt = scene.add.text(16, 38, `${card.cost}`, {
+  const costTxt = scene.add.text(16, 40, `${card.cost}`, {
     fontSize: '13px', fontFamily: '"Courier New", monospace',
     color: '#ffffff', fontStyle: 'bold',
   }).setOrigin(0.5);
   container.add(costTxt);
 
   // — 描述 —
-  const descTxt = scene.add.text(32, 30, card.desc, {
+  const descTxt = scene.add.text(32, 32, card.desc, {
     fontSize: '12px', fontFamily: '"Courier New", monospace',
     color: canPlay ? '#aaccdd' : '#556677',
     wordWrap: { width: w - 40 },
@@ -677,8 +670,8 @@ function createCardGraphics(scene, x, y, w, h, card, index) {
   // — 牌底小装饰 —
   const bottomBar = scene.add.graphics();
   const typeColor = card.type === 'damage' ? 0xff4444 : 0x44aaff;
-  bottomBar.fillStyle(typeColor, 0.3 * alpha);
-  bottomBar.fillRoundedRect(4, h - 6, w - 8, 4, 2);
+  bottomBar.fillStyle(typeColor, 0.4 * alpha);
+  bottomBar.fillRoundedRect(8, h - 8, w - 16, 4, 2);
   container.add(bottomBar);
 
   // — 交互区域 —
@@ -694,7 +687,7 @@ function createCardGraphics(scene, x, y, w, h, card, index) {
     playCard(scene, index, container, x, origY);
   });
 
-  // hover 抬起效果
+  // hover 抬起 + 高亮效果
   hitZone.on('pointerover', () => {
     if (!canPlay) return;
     scene.tweens.add({
@@ -703,14 +696,7 @@ function createCardGraphics(scene, x, y, w, h, card, index) {
       duration: 80,
       ease: 'Back.easeOut',
     });
-    // 边框高亮
-    bg.clear();
-    bg.fillStyle(0x1a0c08, 0.95 * alpha);
-    bg.fillRoundedRect(0, 0, w, h, 8);
-    bg.fillStyle(card.color, 0.85 * alpha);
-    bg.fillRoundedRect(2, 2, w - 4, 20, { tl: 6, tr: 6, bl: 0, br: 0 });
-    bg.lineStyle(3, 0xff8844, 1);
-    bg.strokeRoundedRect(0, 0, w, h, 8);
+    bg.setTint(0xffddaa);
   });
   hitZone.on('pointerout', () => {
     scene.tweens.add({
@@ -719,14 +705,7 @@ function createCardGraphics(scene, x, y, w, h, card, index) {
       duration: 80,
       ease: 'Power1',
     });
-    // 恢复边框
-    bg.clear();
-    bg.fillStyle(0x1a0c08, 0.95 * alpha);
-    bg.fillRoundedRect(0, 0, w, h, 8);
-    bg.fillStyle(card.color, 0.85 * alpha);
-    bg.fillRoundedRect(2, 2, w - 4, 20, { tl: 6, tr: 6, bl: 0, br: 0 });
-    bg.lineStyle(2, canPlay ? 0xdd6633 : 0x4a2818, 0.8 * alpha);
-    bg.strokeRoundedRect(0, 0, w, h, 8);
+    bg.clearTint();
   });
 
   return container;
@@ -738,23 +717,21 @@ function createCardGraphics(scene, x, y, w, h, card, index) {
 function createEndTurnButton(scene) {
   const container = scene.add.container(W / 2, 610);
 
-  const bg = scene.add.graphics();
-  bg.fillStyle(0x5a2212, 0.95);
-  bg.fillRoundedRect(-70, -16, 140, 32, 8);
-  bg.lineStyle(2, 0xcc4420, 0.9);
-  bg.strokeRoundedRect(-70, -16, 140, 32, 8);
-  // 内高光
-  bg.lineStyle(1, 0xff6633, 0.15);
-  bg.strokeRoundedRect(-68, -14, 136, 28, 7);
+  const btnW = 160;
+  const btnH = 42;
+
+  const bg = scene.add.image(0, 0, 'ui_btn_endturn')
+    .setDisplaySize(btnW, btnH)
+    .setOrigin(0.5);
   container.add(bg);
 
   const text = scene.add.text(0, 0, '结束回合', {
     fontSize: '15px', fontFamily: '"Courier New", monospace',
-    color: '#ffffff',
+    color: '#ffffff', fontStyle: 'bold',
   }).setOrigin(0.5);
   container.add(text);
 
-  const hitZone = scene.add.rectangle(0, 0, 140, 32, 0xffffff, 0)
+  const hitZone = scene.add.rectangle(0, 0, btnW, btnH, 0xffffff, 0)
     .setInteractive({ useHandCursor: true });
   container.add(hitZone);
 
@@ -764,22 +741,12 @@ function createEndTurnButton(scene) {
   });
 
   hitZone.on('pointerover', () => {
-    bg.clear();
-    bg.fillStyle(0x7a3018, 1);
-    bg.fillRoundedRect(-70, -16, 140, 32, 8);
-    bg.lineStyle(2, 0xff6633, 1);
-    bg.strokeRoundedRect(-70, -16, 140, 32, 8);
-    bg.lineStyle(1, 0xff8844, 0.2);
-    bg.strokeRoundedRect(-68, -14, 136, 28, 7);
+    bg.setTint(0xffddaa);
+    text.setScale(1.05);
   });
   hitZone.on('pointerout', () => {
-    bg.clear();
-    bg.fillStyle(0x5a2212, 0.95);
-    bg.fillRoundedRect(-70, -16, 140, 32, 8);
-    bg.lineStyle(2, 0xcc4420, 0.9);
-    bg.strokeRoundedRect(-70, -16, 140, 32, 8);
-    bg.lineStyle(1, 0xff6633, 0.15);
-    bg.strokeRoundedRect(-68, -14, 136, 28, 7);
+    bg.clearTint();
+    text.setScale(1);
   });
 
   return container;
@@ -807,6 +774,7 @@ function advanceLevel(scene) {
     return;
   }
   initLevel(GameState.depthLevel);
+  setBackgroundForLevel(scene, GameState.depthLevel);
   updateDepthUI(scene);
   addLog('系统', `=== 下潜至 ${DEPTH_LEVELS[GameState.depthLevel].label} ===`);
   addLog('系统', `敌军：${GameState.enemy.name} 出现了！`);
@@ -960,27 +928,27 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
 
   // ---- 动画：卡牌飞出 ----
   // 在手牌位置创建一个副本并执行飞出动画
-  const flyCard = scene.add.graphics();
   const w = CARD_W, h = CARD_H;
-  flyCard.fillStyle(0x1a0c08, 0.95);
-  flyCard.fillRoundedRect(0, 0, w, h, 8);
-  flyCard.fillStyle(card.color, 0.85);
-  flyCard.fillRoundedRect(2, 2, w - 4, 20, { tl: 6, tr: 6, bl: 0, br: 0 });
-  flyCard.lineStyle(2, 0xff8844, 1);
-  flyCard.strokeRoundedRect(0, 0, w, h, 8);
+  const flyCard = scene.add.image(w / 2, h / 2, 'ui_card_base')
+    .setDisplaySize(w, h);
+
+  // 顶部类型色条
+  const flyTopBar = scene.add.graphics();
+  flyTopBar.fillStyle(card.color, 0.7);
+  flyTopBar.fillRoundedRect(6, 6, w - 12, 18, { tl: 4, tr: 4, bl: 0, br: 0 });
 
   // 复制文字
-  const flyName = scene.add.text(w / 2, 12, card.name, {
+  const flyName = scene.add.text(w / 2, 15, card.name, {
     fontSize: '11px', fontFamily: '"Courier New", monospace',
     color: '#ffffff', fontStyle: 'bold',
   }).setOrigin(0.5);
 
-  const flyDesc = scene.add.text(16, 34, card.desc, {
+  const flyDesc = scene.add.text(w / 2, h / 2 + 6, card.desc, {
     fontSize: '11px', fontFamily: '"Courier New", monospace',
     color: '#aaccdd',
-  });
+  }).setOrigin(0.5);
 
-  const flyContainer = scene.add.container(cardX, cardY, [flyCard, flyName, flyDesc]);
+  const flyContainer = scene.add.container(cardX, cardY, [flyCard, flyTopBar, flyName, flyDesc]);
 
   // 上移 + 淡出
   scene.tweens.add({

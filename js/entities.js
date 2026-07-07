@@ -91,6 +91,7 @@ const ENEMY_CATALOG = {
   marsLeech: {
     key: 'marsLeech',
     name: '火星幼蛭',
+    sprite: 'enemy_mars_leech',
     maxHp: 28,
     pattern: ENEMY_PATTERN.FIXED,
     fixedDamage: 6,
@@ -98,6 +99,7 @@ const ENEMY_CATALOG = {
   duneStalker: {
     key: 'duneStalker',
     name: '沙丘跃行者',
+    sprite: 'enemy_dune_stalker',
     maxHp: 34,
     pattern: ENEMY_PATTERN.ALTERNATING,
     actions: [
@@ -108,6 +110,7 @@ const ENEMY_CATALOG = {
   redCrawler: {
     key: 'redCrawler',
     name: '红土爬行者',
+    sprite: 'enemy_red_crawler',
     maxHp: 46,
     pattern: ENEMY_PATTERN.ALTERNATING,
     actions: [
@@ -118,6 +121,7 @@ const ENEMY_CATALOG = {
   crystalParasite: {
     key: 'crystalParasite',
     name: '晶化寄生虫',
+    sprite: 'enemy_crystal_parasite',
     maxHp: 40,
     pattern: ENEMY_PATTERN.RAMPING,
     baseDamage: 5,
@@ -126,6 +130,7 @@ const ENEMY_CATALOG = {
   deepLurker: {
     key: 'deepLurker',
     name: '地底潜伏者',
+    sprite: 'enemy_deep_lurker',
     maxHp: 55,
     pattern: ENEMY_PATTERN.ALTERNATING,
     actions: [
@@ -136,6 +141,7 @@ const ENEMY_CATALOG = {
   marsDevourer: {
     key: 'marsDevourer',
     name: '火星吞噬者',
+    sprite: 'enemy_mars_devourer',
     maxHp: 70,
     pattern: ENEMY_PATTERN.BOSS_CHARGE,
     chargeTurns: 3,
@@ -162,6 +168,7 @@ class Enemy extends Entity {
   constructor(config) {
     super(config.name, config.maxHp);
     this.key = config.key || null;
+    this.sprite = config.sprite || null;
     this.pattern = config.pattern;
     this.turnCount = 0;
 
