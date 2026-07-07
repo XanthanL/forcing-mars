@@ -20,25 +20,27 @@ const game = new Phaser.Game({
 });
 
 /* ============================================================
- * 全局状态
+ * 全局状态（收敛到 GameState，便于调试、存档、扩展）
  * ============================================================ */
-let player;
-let enemy;            // 当前敌人
-let enemyQueue = [];  // 当前关卡敌人队列
-let depthLevel = 0;   // 0=0m, 1=500m, 2=2000m
-let isFinalBossDefeated = false; // 是否已击败火星吞噬者
+const GameState = {
+  player: null,
+  enemy: null,            // 当前敌人
+  enemyQueue: [],         // 当前关卡敌人队列
+  depthLevel: 0,          // 0=0m, 1=500m, 2=2000m
+  isFinalBossDefeated: false, // 是否已击败火星吞噬者
 
-let drawPile;
-let hand = [];
-let discardPile = [];
+  drawPile: null,
+  hand: [],
+  discardPile: [],
 
-let turnPhase = 'idle'; // idle | playerTurn | enemyTurn | transition | gameOver
+  turnPhase: 'idle',      // idle | playerTurn | enemyTurn | transition | gameOver
 
-let cardContainers = [];
+  cardContainers: [],
+  logLines: [],
+  MAX_LOG: 5,
+};
+
 let endTurnBtn = null;
-
-let logLines = [];
-const MAX_LOG = 5;
 
 /* ============================================================
  * UI 组件引用
@@ -71,17 +73,17 @@ let txtPileInfo;
  * ============================================================ */
 function create() {
   /* ---------- 初始化 ---------- */
-  player = new Player();
-  depthLevel = 0;
-  isFinalBossDefeated = false;
-  turnPhase = 'idle';
-  hand = [];
-  discardPile = [];
-  drawPile = new DrawPile(buildStarterDeck());
-  cardContainers = [];
-  logLines = [];
+  GameState.player = new Player();
+  GameState.depthLevel = 0;
+  GameState.isFinalBossDefeated = false;
+  GameState.turnPhase = 'idle';
+  GameState.hand = [];
+  GameState.discardPile = [];
+  GameState.drawPile = new DrawPile(buildStarterDeck());
+  GameState.cardContainers = [];
+  GameState.logLines = [];
 
-  initLevel(depthLevel);
+  initLevel(GameState.depthLevel);
 
   /* ---------- 绘制持久背景 ---------- */
   drawBackground(this);
@@ -119,8 +121,8 @@ function create() {
 
   /* ---------- 启动游戏 ---------- */
   addLog('系统', '=== 强渡火星 ===');
-  addLog('系统', `当前深度：${DEPTH_LEVELS[depthLevel].label}`);
-  addLog('系统', `敌军：${enemy.name} 出现了！`);
+  addLog('系统', `当前深度：${DEPTH_LEVELS[GameState.depthLevel].label}`);
+  addLog('系统', `敌军：${GameState.enemy.name} 出现了！`);
   startPlayerTurn(this);
 }
 
@@ -178,7 +180,7 @@ function createDepthUI(scene) {
 function updateDepthUI(scene) {
   depthUI.clear();
 
-  const level = DEPTH_LEVELS[depthLevel];
+  const level = DEPTH_LEVELS[GameState.depthLevel];
   const barH = 35;
 
   // 背景条（锈铁色）
@@ -215,8 +217,8 @@ function updateDepthUI(scene) {
   for (let i = 0; i < 3; i++) {
     const lvl = DEPTH_LEVELS[i];
     const segX = indicatorStartX + i * (segmentW + gap);
-    const isActive = i === depthLevel;
-    const isPast = i < depthLevel;
+    const isActive = i === GameState.depthLevel;
+    const isPast = i < GameState.depthLevel;
 
     // 底框（暗锈色）
     depthUI.fillStyle(0x2a1410, 0.8);
@@ -246,8 +248,8 @@ function updateDepthUI(scene) {
   }
 
   // 更新深度文字
-  const depthStr = depthLevel === 0 ? '地表' :
-    depthLevel === 1 ? '地下浅层' : '地核深处';
+  const depthStr = GameState.depthLevel === 0 ? '地表' :
+    GameState.depthLevel === 1 ? '地下浅层' : '地核深处';
   depthText.setText(`◈ 探索深度  ${level.depth}  —  ${depthStr}`);
 }
 
@@ -301,7 +303,7 @@ function createEnemyUI(scene) {
 }
 
 function updateEnemyUI(scene) {
-  if (!enemy) return;
+  if (!GameState.enemy) return;
   enemyGraphics.clear();
 
   const cx = W / 2;
@@ -327,7 +329,7 @@ function updateEnemyUI(scene) {
   enemyGraphics.strokeRoundedRect(boxX + 2, boxY + 2, boxW - 4, boxH - 4, 6);
 
   // 防御指示 — 护盾高亮边框（暖色）
-  if (enemy.shield > 0) {
+  if (GameState.enemy.shield > 0) {
     enemyGraphics.lineStyle(3, 0xff8833, 0.7);
     enemyGraphics.strokeRoundedRect(boxX - 2, boxY - 2, boxW + 4, boxH + 4, 10);
     enemyGraphics.lineStyle(1, 0xffbb66, 0.2);
@@ -336,7 +338,7 @@ function updateEnemyUI(scene) {
 
   // 敌人名（炽热橙红）
   enemyNameText.setPosition(cx, boxY + 12);
-  enemyNameText.setText(`◥ ${enemy.name}`);
+  enemyNameText.setText(`◥ ${GameState.enemy.name}`);
 
   // HP 条背景
   const hpBarW = 200;
@@ -349,26 +351,26 @@ function updateEnemyUI(scene) {
   enemyHpBarBg.fillRoundedRect(hpBarX, hpBarY, hpBarW, hpBarH, 4);
 
   enemyHpBarFill.clear();
-  const hpRatio = enemy.hp / enemy.maxHp;
+  const hpRatio = GameState.enemy.hp / GameState.enemy.maxHp;
   const hpColor = hpRatio > 0.5 ? 0xdd6633 : (hpRatio > 0.25 ? 0xcc8833 : 0xcc3333);
   enemyHpBarFill.fillStyle(hpColor, 1);
   enemyHpBarFill.fillRoundedRect(hpBarX, hpBarY, hpBarW * hpRatio, hpBarH, 4);
 
   // HP 文字
   enemyHpText.setPosition(cx, hpBarY + hpBarH / 2);
-  enemyHpText.setText(`${enemy.hp} / ${enemy.maxHp}`);
+  enemyHpText.setText(`${GameState.enemy.hp} / ${GameState.enemy.maxHp}`);
 
   // 护盾文字
-  if (enemy.shield > 0) {
+  if (GameState.enemy.shield > 0) {
     enemyShieldText.setPosition(cx, hpBarY + hpBarH + 14);
-    enemyShieldText.setText(`🛡 护盾 ${enemy.shield}`);
+    enemyShieldText.setText(`🛡 护盾 ${GameState.enemy.shield}`);
   } else {
     enemyShieldText.setText('');
   }
 
   // 意图
   enemyIntentText.setPosition(cx, boxY + boxH - 12);
-  enemyIntentText.setText(`⚡ ${enemy.getIntentDescription()}`);
+  enemyIntentText.setText(`⚡ ${GameState.enemy.getIntentDescription()}`);
 }
 
 /** 敌人受击震屏动画 */
@@ -426,7 +428,7 @@ function createPlayerUI(scene) {
   playerContainer.add(bgBox);
 
   // ---- 名称标签（仅创建一次） ----
-  const nameTxt = scene.add.text(startX + 8, startY + 6, `◤ ${player.name}`, {
+  const nameTxt = scene.add.text(startX + 8, startY + 6, `◤ ${GameState.player.name}`, {
     fontSize: '14px', fontFamily: '"Courier New", monospace',
     color: '#ff8844', fontStyle: 'bold',
   });
@@ -480,21 +482,21 @@ function updatePlayerUI(scene) {
   playerHpBarBg.fillStyle(0x2a1410, 1);
   playerHpBarBg.fillRoundedRect(hpBarX, hpBarY, hpBarW, hpBarH, 4);
 
-  const hpRatio = player.hp / player.maxHp;
+  const hpRatio = GameState.player.hp / GameState.player.maxHp;
   const hpColor = hpRatio > 0.5 ? 0xdd6633 : (hpRatio > 0.25 ? 0xcc8833 : 0xcc3333);
   playerHpBarFill.fillStyle(hpColor, 1);
   playerHpBarFill.fillRoundedRect(hpBarX, hpBarY, hpBarW * hpRatio, hpBarH, 4);
 
   playerHpText.setPosition(hpBarX + hpBarW + 10, hpBarY + hpBarH / 2);
-  playerHpText.setText(`${player.hp}/${player.maxHp}`);
+  playerHpText.setText(`${GameState.player.hp}/${GameState.player.maxHp}`);
 
   // 护盾（与 HP 条同行右侧）
-  const shieldStr = player.shield > 0 ? `🛡 护盾 ${player.shield}` : '';
+  const shieldStr = GameState.player.shield > 0 ? `🛡 护盾 ${GameState.player.shield}` : '';
   playerShieldText.setPosition(startX + 8, startY + 32);
   playerShieldText.setText(shieldStr);
 
   // 电量（与护盾同行，护盾右侧）
-  const battStr = `⚡ ${'█'.repeat(player.battery)}${'░'.repeat(player.maxBattery - player.battery)} (${player.battery}/${player.maxBattery})`;
+  const battStr = `⚡ ${'█'.repeat(GameState.player.battery)}${'░'.repeat(GameState.player.maxBattery - GameState.player.battery)} (${GameState.player.battery}/${GameState.player.maxBattery})`;
   playerBatteryText.setPosition(startX + 8 + (shieldStr ? 130 : 0), startY + 32);
   playerBatteryText.setText(battStr);
 }
@@ -535,8 +537,8 @@ function shakePlayerUI(scene) {
  * 日志
  * ============================================================ */
 function addLog(sender, msg) {
-  logLines.push(`[${sender}] ${msg}`);
-  if (logLines.length > MAX_LOG) logLines.shift();
+  GameState.logLines.push(`[${sender}] ${msg}`);
+  if (GameState.logLines.length > GameState.MAX_LOG) GameState.logLines.shift();
 }
 
 /* ============================================================
@@ -545,15 +547,15 @@ function addLog(sender, msg) {
 function refreshUI(scene) {
   updateEnemyUI(scene);
   updatePlayerUI(scene);
-  txtLog.setText(logLines.join('\n'));
+  txtLog.setText(GameState.logLines.join('\n'));
   txtPileInfo.setText(
-    `抽牌堆: ${drawPile.size} 张  手牌: ${hand.length} 张  弃牌堆: ${discardPile.length} 张`
+    `抽牌堆: ${GameState.drawPile.size} 张  手牌: ${GameState.hand.length} 张  弃牌堆: ${GameState.discardPile.length} 张`
   );
-  if (turnPhase === 'playerTurn') {
+  if (GameState.turnPhase === 'playerTurn') {
     txtPhase.setText('▶ 玩家回合 — 请出牌或结束回合');
-  } else if (turnPhase === 'enemyTurn') {
+  } else if (GameState.turnPhase === 'enemyTurn') {
     txtPhase.setText('● 敌人回合...');
-  } else if (turnPhase === 'gameOver') {
+  } else if (GameState.turnPhase === 'gameOver') {
     // 由 gameOver 函数管理
   } else {
     txtPhase.setText('');
@@ -601,27 +603,27 @@ const CARD_H = 72;
 
 function renderHand(scene) {
   // 销毁旧卡牌
-  for (const c of cardContainers) { c.destroy(); }
-  cardContainers = [];
+  for (const c of GameState.cardContainers) { c.destroy(); }
+  GameState.cardContainers = [];
 
-  if (hand.length === 0) return;
+  if (GameState.hand.length === 0) return;
 
   const gap = 8;
-  const totalW = hand.length * CARD_W + (hand.length - 1) * gap;
+  const totalW = GameState.hand.length * CARD_W + (GameState.hand.length - 1) * gap;
   const startX = (W - totalW) / 2;
   const y = 415;
 
-  for (let i = 0; i < hand.length; i++) {
-    const card = hand[i];
+  for (let i = 0; i < GameState.hand.length; i++) {
+    const card = GameState.hand[i];
     const x = startX + i * (CARD_W + gap);
     const container = createCardGraphics(scene, x, y, CARD_W, CARD_H, card, i);
-    cardContainers.push(container);
+    GameState.cardContainers.push(container);
   }
 }
 
 function createCardGraphics(scene, x, y, w, h, card, index) {
   const container = scene.add.container(x, y);
-  const canPlay = player.canPlay(card.cost);
+  const canPlay = GameState.player.canPlay(card.cost);
   const alpha = canPlay ? 1.0 : 0.45;
 
   // — 卡牌底框 —
@@ -688,7 +690,7 @@ function createCardGraphics(scene, x, y, w, h, card, index) {
   let origY = y;
 
   hitZone.on('pointerdown', () => {
-    if (turnPhase !== 'playerTurn') return;
+    if (GameState.turnPhase !== 'playerTurn') return;
     playCard(scene, index, container, x, origY);
   });
 
@@ -757,7 +759,7 @@ function createEndTurnButton(scene) {
   container.add(hitZone);
 
   hitZone.on('pointerdown', () => {
-    if (turnPhase !== 'playerTurn') return;
+    if (GameState.turnPhase !== 'playerTurn') return;
     endPlayerTurn(scene);
   });
 
@@ -787,33 +789,33 @@ function createEndTurnButton(scene) {
  * 关卡初始化
  * ============================================================ */
 function initLevel(levelIndex) {
-  enemyQueue = buildEnemyForLevel(levelIndex);
-  if (enemyQueue.length === 0) {
+  GameState.enemyQueue = buildEnemyForLevel(levelIndex);
+  if (GameState.enemyQueue.length === 0) {
     // 容错
-    enemyQueue = buildEnemyForLevel(0);
+    GameState.enemyQueue = buildEnemyForLevel(0);
   }
-  enemy = enemyQueue.shift();
+  GameState.enemy = GameState.enemyQueue.shift();
   // 重置敌人回合计数器
-  enemy.turnCount = 0;
+  GameState.enemy.turnCount = 0;
 }
 
 /** 切换到下一关 */
 function advanceLevel(scene) {
-  depthLevel++;
-  if (depthLevel >= DEPTH_LEVELS.length) {
+  GameState.depthLevel++;
+  if (GameState.depthLevel >= DEPTH_LEVELS.length) {
     // 理论上不会到这里，由胜利逻辑处理
     return;
   }
-  initLevel(depthLevel);
+  initLevel(GameState.depthLevel);
   updateDepthUI(scene);
-  addLog('系统', `=== 下潜至 ${DEPTH_LEVELS[depthLevel].label} ===`);
-  addLog('系统', `敌军：${enemy.name} 出现了！`);
+  addLog('系统', `=== 下潜至 ${DEPTH_LEVELS[GameState.depthLevel].label} ===`);
+  addLog('系统', `敌军：${GameState.enemy.name} 出现了！`);
 }
 
 /** 进入 Boss 战（2000m 第二场） */
 function startBossFight(scene) {
-  enemy = buildFinalBoss();
-  enemy.turnCount = 0;
+  GameState.enemy = buildFinalBoss();
+  GameState.enemy.turnCount = 0;
   addLog('系统', '⚠ 警告：火星吞噬者 出现了！');
 }
 
@@ -821,7 +823,7 @@ function startBossFight(scene) {
  * 关卡过渡动画
  * ============================================================ */
 function playTransitionToNextLevel(scene, callback) {
-  turnPhase = 'transition';
+  GameState.turnPhase = 'transition';
 
   // 全屏遮罩
   const overlay = scene.add.graphics();
@@ -829,7 +831,7 @@ function playTransitionToNextLevel(scene, callback) {
   overlay.fillRect(0, 0, W, H);
 
   // "向下潜入中..." 文字
-  const nextLevel = DEPTH_LEVELS[depthLevel + 1];
+  const nextLevel = DEPTH_LEVELS[GameState.depthLevel + 1];
   const transitText = scene.add.text(W / 2, H / 2 - 40, '▼ 向下潜入中...', {
     fontSize: '36px', fontFamily: '"Courier New", monospace',
     color: '#ff8844', fontStyle: 'bold',
@@ -901,23 +903,23 @@ function playTransitionToNextLevel(scene, callback) {
 
 /** 玩家回合开始 */
 function startPlayerTurn(scene) {
-  if (!player.isAlive) {
+  if (!GameState.player.isAlive) {
     gameOver(scene, 'defeat');
     return;
   }
-  if (!enemy.isAlive) {
+  if (!GameState.enemy.isAlive) {
     handleEnemyDefeated(scene);
     return;
   }
 
-  turnPhase = 'playerTurn';
+  GameState.turnPhase = 'playerTurn';
 
   // 1. 重置电量为 3
-  player.resetBattery();
+  GameState.player.resetBattery();
   // 2. 清空玩家护盾
-  player.clearShield();
+  GameState.player.clearShield();
   addLog('系统', `--- 玩家回合 ---`);
-  addLog('系统', `电量重置为 ${player.maxBattery}，护盾已清空`);
+  addLog('系统', `电量重置为 ${GameState.player.maxBattery}，护盾已清空`);
 
   // 3. 从抽牌堆抽取 4 张
   drawCards(scene, 4);
@@ -928,33 +930,33 @@ function startPlayerTurn(scene) {
 
 /** 抽牌逻辑 */
 function drawCards(scene, count) {
-  let drawn = drawPile.draw(count);
+  let drawn = GameState.drawPile.draw(count);
   if (drawn.length < count) {
-    addLog('系统', `抽牌堆不足，洗入弃牌堆 (${discardPile.length} 张)`);
-    drawPile.reshuffle(discardPile);
-    discardPile = [];
+    addLog('系统', `抽牌堆不足，洗入弃牌堆 (${GameState.discardPile.length} 张)`);
+    GameState.drawPile.reshuffle(GameState.discardPile);
+    GameState.discardPile = [];
     const remaining = count - drawn.length;
-    const more = drawPile.draw(remaining);
+    const more = GameState.drawPile.draw(remaining);
     drawn = drawn.concat(more);
   }
-  hand = hand.concat(drawn);
+  GameState.hand = GameState.hand.concat(drawn);
   addLog('系统', `抽取了 ${drawn.length} 张牌`);
 }
 
 /** 出牌（含卡牌动画） */
 function playCard(scene, index, cardContainer, cardX, cardY) {
-  const card = hand[index];
+  const card = GameState.hand[index];
   if (!card) return;
-  if (turnPhase !== 'playerTurn') return;
+  if (GameState.turnPhase !== 'playerTurn') return;
 
-  if (!player.canPlay(card.cost)) {
+  if (!GameState.player.canPlay(card.cost)) {
     addLog('提示', `电量不足！需要 ${card.cost} 电量`);
     refreshUI(scene);
     return;
   }
 
   // 扣除电量
-  player.spendBattery(card.cost);
+  GameState.player.spendBattery(card.cost);
 
   // ---- 动画：卡牌飞出 ----
   // 在手牌位置创建一个副本并执行飞出动画
@@ -994,8 +996,8 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
 
   // ---- 应用卡牌效果 ----
   if (card.type === 'damage') {
-    const result = enemy.takeDamage(card.value);
-    addLog(card.name, `对 ${enemy.name} 造成 ${card.value} 点伤害` +
+    const result = GameState.enemy.takeDamage(card.value);
+    addLog(card.name, `对 ${GameState.enemy.name} 造成 ${card.value} 点伤害` +
       (result.absorbed > 0 ? ` (护盾吸收 ${result.absorbed})` : ''));
 
     // 敌人受伤飘字（红色）
@@ -1004,7 +1006,7 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
     // 敌人受击震屏
     shakeEnemyUI(scene);
   } else if (card.type === 'shield') {
-    player.addShield(card.value);
+    GameState.player.addShield(card.value);
     addLog(card.name, `获得 ${card.value} 点护盾`);
 
     // 护盾飘字（暖金）
@@ -1012,8 +1014,8 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
   }
 
   // 从手牌移除，进弃牌堆
-  hand.splice(index, 1);
-  discardPile.push(card);
+  GameState.hand.splice(index, 1);
+  GameState.discardPile.push(card);
 
   // 立即隐藏被点击的卡牌（已移除了）
   // 短暂延迟后刷新手牌
@@ -1021,7 +1023,7 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
     refreshUI(scene);
 
     // 检查敌人是否死亡
-    if (!enemy.isAlive) {
+    if (!GameState.enemy.isAlive) {
       // 不再渲染手牌，准备处理击败
       renderHand(scene);
       handleEnemyDefeated(scene);
@@ -1034,26 +1036,26 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
 
 /** 处理敌人被击败 */
 function handleEnemyDefeated(scene) {
-  addLog('系统', `✦ ${enemy.name} 已被击败！`);
+  addLog('系统', `✦ ${GameState.enemy.name} 已被击败！`);
 
   // 清空手牌
-  discardPile = discardPile.concat(hand);
-  hand = [];
+  GameState.discardPile = GameState.discardPile.concat(GameState.hand);
+  GameState.hand = [];
   renderHand(scene);
   refreshUI(scene);
 
   // 判断当前关卡是否还有更多敌人
-  if (enemyQueue.length > 0) {
+  if (GameState.enemyQueue.length > 0) {
     // 同一关卡的下一个敌人
-    enemy = enemyQueue.shift();
-    enemy.turnCount = 0;
-    addLog('系统', `敌军：${enemy.name} 出现了！`);
+    GameState.enemy = GameState.enemyQueue.shift();
+    GameState.enemy.turnCount = 0;
+    addLog('系统', `敌军：${GameState.enemy.name} 出现了！`);
 
     // 短暂延迟后开始新回合
     scene.time.delayedCall(600, () => {
       startPlayerTurn(scene);
     });
-  } else if (depthLevel === 2 && !isFinalBossDefeated) {
+  } else if (GameState.depthLevel === 2 && !GameState.isFinalBossDefeated) {
     // 2000m：地底潜伏者已被击败，进入 Boss 战
     // 标记为 true 以便后续击败 Boss 时判定通关，而非再次进入 Boss 流程
 
@@ -1114,7 +1116,7 @@ function handleEnemyDefeated(scene) {
               overlay.destroy();
               // 开始 Boss 战
               startBossFight(scene);
-              isFinalBossDefeated = true; // Boss 战已激活，下次击败即为通关
+              GameState.isFinalBossDefeated = true; // Boss 战已激活，下次击败即为通关
               refreshUI(scene);
               scene.time.delayedCall(300, () => {
                 startPlayerTurn(scene);
@@ -1127,16 +1129,16 @@ function handleEnemyDefeated(scene) {
     });
   } else {
     // 普通关卡通关 → 进入下一关
-    if (depthLevel < DEPTH_LEVELS.length - 1) {
+    if (GameState.depthLevel < DEPTH_LEVELS.length - 1) {
       playTransitionToNextLevel(scene, () => {
         advanceLevel(scene);
         refreshUI(scene);
         // 重新创建牌组（保持现有牌组，只重置状态）
-        discardPile = discardPile.concat(hand);
-        hand = [];
+        GameState.discardPile = GameState.discardPile.concat(GameState.hand);
+        GameState.hand = [];
         // 用当前弃牌堆重新洗牌构建抽牌堆
-        drawPile.reshuffle(discardPile);
-        discardPile = [];
+        GameState.drawPile.reshuffle(GameState.discardPile);
+        GameState.discardPile = [];
         refreshUI(scene);
         startPlayerTurn(scene);
       });
@@ -1149,20 +1151,20 @@ function handleEnemyDefeated(scene) {
 
 /** 玩家结束回合 → 触发敌人 AI */
 function endPlayerTurn(scene) {
-  turnPhase = 'enemyTurn';
+  GameState.turnPhase = 'enemyTurn';
   addLog('系统', `--- 敌人回合 ---`);
 
   // 手牌全部进入弃牌堆
-  addLog('系统', `${hand.length} 张手牌进入弃牌堆`);
-  discardPile = discardPile.concat(hand);
-  hand = [];
+  addLog('系统', `${GameState.hand.length} 张手牌进入弃牌堆`);
+  GameState.discardPile = GameState.discardPile.concat(GameState.hand);
+  GameState.hand = [];
 
   refreshUI(scene);
   renderHand(scene);
 
   // 敌人 AI 延迟
   scene.time.delayedCall(700, () => {
-    if (!enemy.isAlive) {
+    if (!GameState.enemy.isAlive) {
       handleEnemyDefeated(scene);
       return;
     }
@@ -1172,30 +1174,30 @@ function endPlayerTurn(scene) {
 
 /** 执行敌人回合 */
 function executeEnemyTurn(scene) {
-  if (!enemy.isAlive) {
+  if (!GameState.enemy.isAlive) {
     handleEnemyDefeated(scene);
     return;
   }
 
-  const result = enemy.executeTurn(player);
+  const result = GameState.enemy.executeTurn(GameState.player);
 
   if (result.type === 'damage' || result.type === 'chargedAttack') {
-    addLog(enemy.name, result.desc);
+    addLog(GameState.enemy.name, result.desc);
     // 玩家受击飘字（红色）
     spawnFloatingText(scene, 'player', `-${result.value} HP`, '#ff4422');
     shakePlayerUI(scene);
   } else if (result.type === 'shield') {
-    addLog(enemy.name, result.desc);
+    addLog(GameState.enemy.name, result.desc);
     // 敌人护盾飘字（暖金）
     spawnFloatingText(scene, 'enemy', `+${result.value} 护盾`, '#ffaa44');
   } else if (result.type === 'charge') {
-    addLog(enemy.name, result.desc);
+    addLog(GameState.enemy.name, result.desc);
   }
 
   refreshUI(scene);
 
   // 检查玩家是否死亡
-  if (!player.isAlive) {
+  if (!GameState.player.isAlive) {
     scene.time.delayedCall(500, () => gameOver(scene, 'defeat'));
     return;
   }
@@ -1210,14 +1212,14 @@ function executeEnemyTurn(scene) {
  * 游戏结束
  * ============================================================ */
 function gameOver(scene, result) {
-  turnPhase = 'gameOver';
+  GameState.turnPhase = 'gameOver';
 
   const W2 = W, H2 = H;
 
   // --- 遮罩层 ---
   const overlay = scene.add.graphics();
 
-  if (result === 'victory' && isFinalBossDefeated) {
+  if (result === 'victory' && GameState.isFinalBossDefeated) {
     // ========= 精美通关画面 =========
     overlay.fillStyle(0x080202, 0);
     overlay.fillRect(0, 0, W2, H2);

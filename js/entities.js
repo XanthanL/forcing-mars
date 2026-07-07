@@ -85,6 +85,65 @@ class EnemyActionResult {
 }
 
 /* ============================================================
+ * 敌人图鉴（数据驱动，新增敌人只需在这里注册）
+ * ============================================================ */
+const ENEMY_CATALOG = {
+  marsLeech: {
+    key: 'marsLeech',
+    name: '火星幼蛭',
+    maxHp: 28,
+    pattern: ENEMY_PATTERN.FIXED,
+    fixedDamage: 6,
+  },
+  duneStalker: {
+    key: 'duneStalker',
+    name: '沙丘跃行者',
+    maxHp: 34,
+    pattern: ENEMY_PATTERN.ALTERNATING,
+    actions: [
+      { type: 'shield', value: 5 },
+      { type: 'damage', value: 9 },
+    ],
+  },
+  redCrawler: {
+    key: 'redCrawler',
+    name: '红土爬行者',
+    maxHp: 46,
+    pattern: ENEMY_PATTERN.ALTERNATING,
+    actions: [
+      { type: 'damage', value: 11 },
+      { type: 'shield', value: 8 },
+    ],
+  },
+  crystalParasite: {
+    key: 'crystalParasite',
+    name: '晶化寄生虫',
+    maxHp: 40,
+    pattern: ENEMY_PATTERN.RAMPING,
+    baseDamage: 5,
+    damageIncrement: 3,
+  },
+  deepLurker: {
+    key: 'deepLurker',
+    name: '地底潜伏者',
+    maxHp: 55,
+    pattern: ENEMY_PATTERN.ALTERNATING,
+    actions: [
+      { type: 'shield', value: 15 },
+      { type: 'damage', value: 14 },
+    ],
+  },
+  marsDevourer: {
+    key: 'marsDevourer',
+    name: '火星吞噬者',
+    maxHp: 70,
+    pattern: ENEMY_PATTERN.BOSS_CHARGE,
+    chargeTurns: 3,
+    chargeDamage: 30,
+  },
+};
+
+/* ============================================================
  * 敌人类（支持多种 AI 模式）
  * ============================================================ */
 class Enemy extends Entity {
@@ -102,6 +161,7 @@ class Enemy extends Entity {
    */
   constructor(config) {
     super(config.name, config.maxHp);
+    this.key = config.key || null;
     this.pattern = config.pattern;
     this.turnCount = 0;
 
@@ -119,6 +179,15 @@ class Enemy extends Entity {
     this.chargeTurns = config.chargeTurns || 0;
     this.chargeDamage = config.chargeDamage || 0;
     this.currentCharge = 0;
+  }
+
+  /** 从图鉴 key 快速创建敌人实例 */
+  static fromCatalog(catalogKey) {
+    const data = ENEMY_CATALOG[catalogKey];
+    if (!data) {
+      throw new Error(`Enemy catalog key not found: ${catalogKey}`);
+    }
+    return new Enemy(data);
   }
 
   /** 获取敌人意图描述（用于 UI 显示） */
@@ -271,71 +340,34 @@ const DEPTH_LEVELS = [
 ];
 
 /* ============================================================
+ * 关卡敌人配置（数据驱动）
+ * pick: 0 表示顺序出现，1 表示从中随机选取一个
+ * ============================================================ */
+const LEVEL_ENEMY_CONFIG = [
+  { catalogKeys: ['marsLeech', 'duneStalker'], pick: 1 },
+  { catalogKeys: ['redCrawler', 'crystalParasite'], pick: 1 },
+  { catalogKeys: ['deepLurker'], pick: 0 },
+];
+
+/* ============================================================
  * 敌人池配置（按关卡索引）
  * 返回一个敌人实例数组。最后一关特殊：先出小Boss再出大Boss。
  * ============================================================ */
 function buildEnemyForLevel(levelIndex) {
+  const config = LEVEL_ENEMY_CONFIG[levelIndex];
+  if (!config) {
+    throw new Error(`No enemy config for level index: ${levelIndex}`);
+  }
+
   const enemies = [];
 
-  if (levelIndex === 0) {
-    // 第一层：地表 0m — 随机遭遇
-    const roll = Math.random();
-    if (roll < 0.5) {
-      // 火星幼蛭（28 HP，固定伤害6）
-      enemies.push(new Enemy({
-        name: '火星幼蛭',
-        maxHp: 28,
-        pattern: ENEMY_PATTERN.FIXED,
-        fixedDamage: 6,
-      }));
-    } else {
-      // 沙丘跃行者（34 HP，交替护盾5和伤害9）
-      enemies.push(new Enemy({
-        name: '沙丘跃行者',
-        maxHp: 34,
-        pattern: ENEMY_PATTERN.ALTERNATING,
-        actions: [
-          { type: 'shield', value: 5 },
-          { type: 'damage', value: 9 },
-        ],
-      }));
+  if (config.pick === 1) {
+    const key = config.catalogKeys[Math.floor(Math.random() * config.catalogKeys.length)];
+    enemies.push(Enemy.fromCatalog(key));
+  } else {
+    for (const key of config.catalogKeys) {
+      enemies.push(Enemy.fromCatalog(key));
     }
-  } else if (levelIndex === 1) {
-    // 第二层：地下浅层 500m — 随机遭遇
-    const roll = Math.random();
-    if (roll < 0.5) {
-      // 红土爬行者（46 HP，交替伤害11和护盾8）
-      enemies.push(new Enemy({
-        name: '红土爬行者',
-        maxHp: 46,
-        pattern: ENEMY_PATTERN.ALTERNATING,
-        actions: [
-          { type: 'damage', value: 11 },
-          { type: 'shield', value: 8 },
-        ],
-      }));
-    } else {
-      // 晶化寄生虫（40 HP，伤害递增：5, 8, 11...）
-      enemies.push(new Enemy({
-        name: '晶化寄生虫',
-        maxHp: 40,
-        pattern: ENEMY_PATTERN.RAMPING,
-        baseDamage: 5,
-        damageIncrement: 3,
-      }));
-    }
-  } else if (levelIndex === 2) {
-    // 第三层：地核深处 2000m — 先潜伏者，后吞噬者
-    // 地底潜伏者（55 HP，交替护盾15和伤害14）
-    enemies.push(new Enemy({
-      name: '地底潜伏者',
-      maxHp: 55,
-      pattern: ENEMY_PATTERN.ALTERNATING,
-      actions: [
-        { type: 'shield', value: 15 },
-        { type: 'damage', value: 14 },
-      ],
-    }));
   }
 
   return enemies;
@@ -343,11 +375,5 @@ function buildEnemyForLevel(levelIndex) {
 
 /** 创建最终 Boss：火星吞噬者 */
 function buildFinalBoss() {
-  return new Enemy({
-    name: '火星吞噬者',
-    maxHp: 30,
-    pattern: ENEMY_PATTERN.BOSS_CHARGE,
-    chargeTurns: 2,
-    chargeDamage: 26,
-  });
+  return Enemy.fromCatalog('marsDevourer');
 }
