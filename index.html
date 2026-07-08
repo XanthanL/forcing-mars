@@ -16,9 +16,18 @@
       overflow: hidden;
     }
     #game-container {
+      width: 100vw;
+      height: 100vh;
+      max-width: 960px;
+      max-height: 640px;
+      aspect-ratio: 960 / 640;
       border: 2px solid #6a2a1a;
       border-radius: 8px;
       box-shadow: 0 0 40px rgba(180, 40, 20, 0.2), 0 0 80px rgba(120, 30, 10, 0.1);
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
     }
   </style>
 </head>
@@ -31,6 +40,7 @@
   <!-- Game scripts -->
   <script src="js/entities.js"></script>
   <script src="js/cards.js"></script>
+  <script src="js/story.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>
