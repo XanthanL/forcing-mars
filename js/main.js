@@ -56,6 +56,11 @@ function preload() {
   scene.load.image('ui_card_base', 'assets/ui/ui_card_base.png');
   scene.load.image('ui_btn_endturn', 'assets/ui/ui_btn_endturn.png');
   scene.load.image('ui_bar_bg', 'assets/ui/ui_bar_bg.png');
+
+  // BGM 音频
+  scene.load.audio('bgm-story', 'assets/bgms/bgm_story.mp3');
+  scene.load.audio('bgm-battle', 'assets/bgms/bgm_battle.mp3');
+  scene.load.audio('bgm-boss', 'assets/bgms/bgm_boss.mp3');
 }
 
 /* ============================================================
@@ -1050,12 +1055,20 @@ function advanceLevel(scene) {
   updateDepthUI(scene);
   addLog('系统', `=== 下潜至 ${DEPTH_LEVELS[GameState.depthLevel].label} ===`);
   addLog('系统', `敌军：${GameState.enemy.name} 出现了！`);
+
+  // BGM 切换：500m 位置继续播放战斗音乐
+  if (GameState.depthLevel === 1) {
+    BGM.switch(scene, 'bgm-battle', true);
+  }
 }
 
 function startBossFight(scene) {
   GameState.enemy = buildFinalBoss();
   GameState.enemy.turnCount = 0;
   addLog('系统', '⚠ 警告：火星吞噬者 出现了！');
+
+  // BGM 切换：Boss 战开始时播放 Boss 音乐
+  BGM.switch(scene, 'bgm-boss', true);
 }
 
 /* ============================================================
@@ -1322,6 +1335,11 @@ function startPlayerTurn(scene) {
   }
 
   GameState.turnPhase = 'playerTurn';
+
+  // BGM 切换：进入战斗场景时播放战斗音乐
+  if (GameState.depthLevel === 0) {
+    BGM.switch(scene, 'bgm-battle', true);
+  }
 
   GameState.player.resetBattery();
   GameState.player.clearShield();
