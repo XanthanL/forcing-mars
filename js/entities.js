@@ -37,17 +37,67 @@ class Entity {
 }
 
 /* ============================================================
+ * 遗物（Relic）定义
+ * ============================================================ */
+const RELICS = {
+  marsPowerCore: {
+    id: 'marsPowerCore',
+    name: '火星动力核心',
+    desc: '最大生命值上限 +10',
+    type: 'basic',
+    color: 0xff6633,
+    effect: { maxHpBonus: 10 },
+  },
+  thuliumBattery: {
+    id: 'thuliumBattery',
+    name: '铥元素电池',
+    desc: '每回合初始电量 +1',
+    type: 'epic',
+    color: 0x33ccff,
+    effect: { maxBatteryBonus: 1 },
+  },
+};
+
+/* ============================================================
  * 玩家类
  * ============================================================ */
 class Player extends Entity {
   constructor() {
     super('宇航员', 80);
-    this.battery = 0;
-    this.maxBattery = 3;
+    this.baseBattery = 3;
+    this.baseMaxHp = 80;
+    this.relics = [];
+    this.damageTakenBonus = 0; // 本回合受到的伤害额外加值
+
+    // maxHp 改为受遗物加成的计算属性
+    Object.defineProperty(this, 'maxHp', {
+      get() { return this.baseMaxHp + this.getRelicBonus('maxHpBonus'); },
+      configurable: true,
+      enumerable: true,
+    });
+  }
+
+  /** 获取遗物提供的指定加成总和 */
+  getRelicBonus(key) {
+    return this.relics.reduce((sum, relic) => sum + (relic.effect[key] || 0), 0);
+  }
+
+  /** 当前最大电量（含遗物加成） */
+  get maxBattery() {
+    return this.baseBattery + this.getRelicBonus('maxBatteryBonus');
+  }
+
+  /** 获得遗物，同时按遗物效果调整当前状态 */
+  addRelic(relic) {
+    this.relics.push(relic);
+    if (relic.effect.maxHpBonus) {
+      this.hp = Math.min(this.maxHp, this.hp + relic.effect.maxHpBonus);
+    }
   }
 
   resetBattery() {
     this.battery = this.maxBattery;
+    this.damageTakenBonus = 0;
   }
 
   canPlay(cost) {
@@ -144,8 +194,8 @@ const ENEMY_CATALOG = {
     sprite: 'enemy_mars_devourer',
     maxHp: 70,
     pattern: ENEMY_PATTERN.BOSS_CHARGE,
-    chargeTurns: 3,
-    chargeDamage: 30,
+    chargeTurns: 2,
+    chargeDamage: 26,
   },
 };
 
@@ -254,22 +304,30 @@ class Enemy extends Entity {
     this.turnCount++;
     const result = new EnemyActionResult();
 
+    const dealDamage = (baseDamage) => {
+      const bonus = player.damageTakenBonus || 0;
+      const totalDamage = baseDamage + bonus;
+      player.takeDamage(totalDamage);
+      return totalDamage;
+    };
+
     switch (this.pattern) {
-      case ENEMY_PATTERN.FIXED:
+      case ENEMY_PATTERN.FIXED: {
+        const total = dealDamage(this.fixedDamage);
         result.type = 'damage';
-        result.value = this.fixedDamage;
-        result.desc = `${this.name} 造成 ${this.fixedDamage} 点伤害`;
-        player.takeDamage(this.fixedDamage);
+        result.value = total;
+        result.desc = `${this.name} 造成 ${total} 点伤害`;
         break;
+      }
 
       case ENEMY_PATTERN.ALTERNATING: {
         const idx = (this.turnCount - 1) % this.actions.length;
         const action = this.actions[idx];
         if (action.type === 'damage') {
+          const total = dealDamage(action.value);
           result.type = 'damage';
-          result.value = action.value;
-          result.desc = `${this.name} 造成 ${action.value} 点伤害`;
-          player.takeDamage(action.value);
+          result.value = total;
+          result.desc = `${this.name} 造成 ${total} 点伤害`;
         } else if (action.type === 'shield') {
           result.type = 'shield';
           result.value = action.value;
@@ -280,11 +338,11 @@ class Enemy extends Entity {
       }
 
       case ENEMY_PATTERN.RAMPING: {
-        const dmg = this.baseDamage + (this.turnCount - 1) * this.damageIncrement;
+        const baseDmg = this.baseDamage + (this.turnCount - 1) * this.damageIncrement;
+        const total = dealDamage(baseDmg);
         result.type = 'damage';
-        result.value = dmg;
-        result.desc = `${this.name} 造成 ${dmg} 点伤害`;
-        player.takeDamage(dmg);
+        result.value = total;
+        result.desc = `${this.name} 造成 ${total} 点伤害`;
         break;
       }
 
@@ -296,10 +354,10 @@ class Enemy extends Entity {
           result.value = 0;
           result.desc = `${this.name} 正在蓄力... (${this.currentCharge}/${this.chargeTurns})`;
         } else {
+          const total = dealDamage(this.chargeDamage);
           result.type = 'chargedAttack';
-          result.value = this.chargeDamage;
-          result.desc = `★ ${this.name} 释放致命一击！造成 ${this.chargeDamage} 点伤害 ★`;
-          player.takeDamage(this.chargeDamage);
+          result.value = total;
+          result.desc = `★ ${this.name} 释放致命一击！造成 ${total} 点伤害 ★`;
           // 重置蓄力，开始新一轮
           this.currentCharge = 0;
         }

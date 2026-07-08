@@ -75,11 +75,11 @@ class StoryScene extends Phaser.Scene {
     this.skipBarBg.fillStyle(0x113311, 0.8);
     this.skipBarBg.fillRoundedRect(-110, -22, 220, 8, 4);
 
-    this.input.keyboard.on('keydown-SPACE', () => { this.skipActive = true; });
+    this.input.keyboard.on('keydown-SPACE', () => { if (!this.isFinished) this.skipActive = true; });
     this.input.keyboard.on('keyup-SPACE', () => { this.skipActive = false; });
 
-    // 鼠标/触摸按下也触发跳过
-    this.input.on('pointerdown', () => { this.skipActive = true; });
+    // 鼠标/触摸按下也触发跳过（剧情播放期间有效）
+    this.input.on('pointerdown', () => { if (!this.isFinished) this.skipActive = true; });
     this.input.on('pointerup', () => { this.skipActive = false; });
 
     this.startTypingNextLine();

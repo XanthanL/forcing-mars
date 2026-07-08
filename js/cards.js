@@ -79,16 +79,59 @@ const CARD_DEFS = {
     rarity: CARD_RARITY.COMMON,
     retain: true,
   },
+  /* ---------- 战后奖励扩展卡池 ---------- */
+  antimatterRailgun: {
+    id: 'antimatterRailgun',
+    name: '反物质轨道炮',
+    cost: 3,
+    desc: '造成 24 点毁灭伤害',
+    type: 'damage',
+    value: 24,
+    color: 0xff22ff,
+    rarity: CARD_RARITY.RARE,
+  },
+  emergencyOverloadValve: {
+    id: 'emergencyOverloadValve',
+    name: '应急过载应急阀',
+    cost: 0,
+    desc: '获得 1 点电量，本回合受伤 +2',
+    type: 'special',
+    value: 1,
+    color: 0xffdd00,
+    rarity: CARD_RARITY.UNCOMMON,
+    gainBattery: 1,
+    damageTakenBonus: 2,
+  },
+  nanoRepairBoost: {
+    id: 'nanoRepairBoost',
+    name: '纳米修复强化',
+    cost: 1,
+    desc: '获得 4 护盾并恢复 3 生命',
+    type: 'shield',
+    value: 4,
+    color: 0x22ffaa,
+    rarity: CARD_RARITY.COMMON,
+    heal: 3,
+  },
 };
 
 /* ============================================================
  * 卡牌池（用于战后奖励、商店等）
  * ============================================================ */
 const CARD_POOL = {
-  [CARD_RARITY.COMMON]: ['emergencyRepair'],
-  [CARD_RARITY.UNCOMMON]: ['overchargeBlast', 'shieldMatrix'],
-  [CARD_RARITY.RARE]: ['piercingBeam'],
+  [CARD_RARITY.COMMON]: ['emergencyRepair', 'nanoRepairBoost'],
+  [CARD_RARITY.UNCOMMON]: ['overchargeBlast', 'shieldMatrix', 'emergencyOverloadValve'],
+  [CARD_RARITY.RARE]: ['piercingBeam', 'antimatterRailgun'],
 };
+
+/* ============================================================
+ * 卡牌实例唯一 ID 生成器
+ * ============================================================ */
+let CARD_UID_COUNTER = 0;
+
+function createCardInstance(def) {
+  return { ...def, uid: CARD_UID_COUNTER++ };
+}
 
 /* ============================================================
  * 初始牌组（共 10 张）
@@ -101,10 +144,9 @@ function buildStarterDeck() {
     { def: 'plasmaShield',     count: 4 },
     { def: 'shieldMatrix',     count: 1 },
   ];
-  let uid = 0;
   for (const entry of template) {
     for (let i = 0; i < entry.count; i++) {
-      deck.push({ ...CARD_DEFS[entry.def], uid: uid++ });
+      deck.push(createCardInstance(CARD_DEFS[entry.def]));
     }
   }
   return deck;
@@ -137,9 +179,25 @@ function rollCardRewards(count = 3, weights = { common: 0.6, uncommon: 0.3, rare
     if (pickedIds.has(def.id)) continue;
 
     pickedIds.add(def.id);
-    rewards.push({ ...def });
+    rewards.push(createCardInstance(def));
   }
 
+  return rewards;
+}
+
+/* ============================================================
+ * 战后三选一奖励专用扩展卡池
+ * ============================================================ */
+const POST_BATTLE_REWARD_POOL = ['antimatterRailgun', 'emergencyOverloadValve', 'nanoRepairBoost'];
+
+function rollPostBattleRewards(count = 3) {
+  const pool = [...POST_BATTLE_REWARD_POOL];
+  const rewards = [];
+  while (rewards.length < count && pool.length > 0) {
+    const idx = Math.floor(Math.random() * pool.length);
+    const key = pool.splice(idx, 1)[0];
+    rewards.push(createCardInstance(CARD_DEFS[key]));
+  }
   return rewards;
 }
 

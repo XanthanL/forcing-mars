@@ -101,10 +101,12 @@ let playerHpText;
 let playerShieldIcon;
 let playerShieldText;
 let batterySlots = [];
+let playerRelicSlots = [];
 
 // 敌人（右侧）
 let enemyContainer;
 let enemySprite;
+let enemyNameText;
 let enemyHpBarBg;
 let enemyHpBarFill;
 let enemyShieldBar;
@@ -112,6 +114,9 @@ let enemyHpText;
 let enemyShieldText;
 let enemyIntentIcon;
 let enemyIntentText;
+let enemyMaskShape;
+let bossChargeTween;
+let bossWarningText;
 
 // 结束回合按钮
 let endTurnBtn;
@@ -141,13 +146,14 @@ function create() {
 
   /* ---------- 日志 ---------- */
   logText = this.add.text(W / 2, 58, '', {
-    fontSize: '13px',
+    fontSize: '14px',
     fontFamily: '"Courier New", monospace',
-    color: '#ffccaa',
+    color: '#ffddbb',
     align: 'center',
-    lineSpacing: 3,
+    lineSpacing: 4,
+    fontStyle: 'bold',
     stroke: '#000000',
-    strokeThickness: 2,
+    strokeThickness: 3,
   }).setOrigin(0.5, 0);
 
   /* ---------- 角色对抗区 ---------- */
@@ -166,19 +172,21 @@ function create() {
 
   /* ---------- 牌库信息（左右下角） ---------- */
   drawPileText = this.add.text(80, 440, '', {
-    fontSize: '13px',
+    fontSize: '14px',
     fontFamily: '"Courier New", monospace',
-    color: '#aa8866',
+    color: '#ffccaa',
+    fontStyle: 'bold',
     stroke: '#000000',
-    strokeThickness: 2,
+    strokeThickness: 3,
   }).setOrigin(0.5);
 
   discardPileText = this.add.text(W - 80, 440, '', {
-    fontSize: '13px',
+    fontSize: '14px',
     fontFamily: '"Courier New", monospace',
-    color: '#aa8866',
+    color: '#ffccaa',
+    fontStyle: 'bold',
     stroke: '#000000',
-    strokeThickness: 2,
+    strokeThickness: 3,
   }).setOrigin(0.5);
 
   /* ---------- 结束回合按钮 ---------- */
@@ -374,6 +382,9 @@ function createPlayerUI(scene) {
     batterySlots.push(slot);
   }
 
+  // 遗物槽（空位与已获取遗物均由 updatePlayerUI 绘制）
+  playerRelicSlots = [];
+
   updatePlayerUI(scene);
 }
 
@@ -385,6 +396,26 @@ function drawHexagon(gfx, cx, cy, r, color, alpha) {
     points.push({ x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
   }
   gfx.fillPoints(points, true, true);
+}
+
+function drawHexagonOutline(gfx, cx, cy, r, color, alpha, lineWidth = 1.5) {
+  gfx.lineStyle(lineWidth, color, alpha);
+  const points = [];
+  for (let i = 0; i < 6; i++) {
+    const angle = Math.PI / 3 * i - Math.PI / 2;
+    points.push({ x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
+  }
+  gfx.strokePoints(points, true, true);
+}
+
+function drawStar(gfx, cx, cy, points, outerR, innerR) {
+  const path = [];
+  for (let i = 0; i < points * 2; i++) {
+    const r = i % 2 === 0 ? outerR : innerR;
+    const angle = (Math.PI / points) * i - Math.PI / 2;
+    path.push({ x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
+  }
+  gfx.fillPoints(path, true, true);
 }
 
 function updatePlayerUI(scene) {
@@ -430,8 +461,17 @@ function updatePlayerUI(scene) {
     playerShieldText.setText('');
   }
 
-  // 电池槽
+  // 电池槽（动态增减，以适配遗物提升的最大电量）
   const battY = 420;
+  while (batterySlots.length < GameState.player.maxBattery) {
+    const slot = scene.add.graphics();
+    playerContainer.add(slot);
+    batterySlots.push(slot);
+  }
+  while (batterySlots.length > GameState.player.maxBattery) {
+    const slot = batterySlots.pop();
+    slot.destroy();
+  }
   for (let i = 0; i < batterySlots.length; i++) {
     const slot = batterySlots[i];
     slot.clear();
@@ -443,6 +483,32 @@ function updatePlayerUI(scene) {
     slot.fillStyle(color, filled ? 1 : 0.3);
     slot.fillCircle(x, battY, 10);
     slot.strokeCircle(x, battY, 10);
+  }
+
+  // 遗物槽（HP 条下方）
+  for (const slot of playerRelicSlots) { slot.destroy(); }
+  playerRelicSlots = [];
+
+  const relicY = hpBarY + hpBarH + 22;
+  const relicSize = 10;
+  const relicGap = 8;
+  const relicStartX = hpBarX + relicSize + 4;
+
+  if (GameState.player.relics.length === 0) {
+    const emptySlot = scene.add.graphics();
+    drawHexagonOutline(emptySlot, relicStartX, relicY, relicSize, 0x887766, 0.65);
+    playerContainer.add(emptySlot);
+    playerRelicSlots.push(emptySlot);
+  } else {
+    for (let i = 0; i < GameState.player.relics.length; i++) {
+      const relic = GameState.player.relics[i];
+      const rx = relicStartX + i * (relicSize * 2 + relicGap);
+      const slot = scene.add.graphics();
+      drawHexagon(slot, rx, relicY, relicSize, relic.color, 0.95);
+      drawHexagonOutline(slot, rx, relicY, relicSize, 0xffffff, 0.4);
+      playerContainer.add(slot);
+      playerRelicSlots.push(slot);
+    }
   }
 }
 
@@ -491,14 +557,23 @@ function createEnemyUI(scene) {
   enemyBg.strokeRoundedRect(ex - 92, ey - 92, 184, 184, 16);
   enemyContainer.add(enemyBg);
 
-  // 敌人立绘
+  // 敌人立绘（先占位，在 updateEnemyUI 中按实际敌人设置贴图）
   enemySprite = scene.add.image(ex, ey, 'enemy_mars_leech')
     .setOrigin(0.5)
     .setAlpha(0);
+
+  // 圆形遮罩，裁掉非透明背景
+  enemyMaskShape = scene.add.graphics();
+  enemyMaskShape.fillStyle(0xffffff);
+  enemyMaskShape.fillCircle(ex, ey, 88);
+  const enemyMask = enemyMaskShape.createGeometryMask();
+  enemySprite.setMask(enemyMask);
+  enemyMaskShape.setVisible(false);
   enemyContainer.add(enemySprite);
+  enemyContainer.add(enemyMaskShape);
 
   // 敌人名
-  enemyNameText = scene.add.text(ex, ey + 90, '', {
+  enemyNameText = scene.add.text(ex, ey + 98, '', {
     fontSize: '16px',
     fontFamily: '"Courier New", monospace',
     color: '#ff6666',
@@ -572,7 +647,7 @@ function updateEnemyUI(scene) {
     enemySprite.setAlpha(0);
   }
 
-  enemyNameText.setPosition(ex, ey + 92);
+  enemyNameText.setPosition(ex, ey + 98);
   enemyNameText.setText(`◥ ${GameState.enemy.name}`);
 
   // HP 条
@@ -600,8 +675,8 @@ function updateEnemyUI(scene) {
 
   // 护盾文字
   if (GameState.enemy.shield > 0) {
-    enemyShieldText.setPosition(ex + hpBarW / 2 + 24, hpBarY + hpBarH / 2);
-    enemyShieldText.setText(`🛡${GameState.enemy.shield}`);
+    enemyShieldText.setPosition(ex + hpBarW / 2 + 28, hpBarY + hpBarH / 2);
+    enemyShieldText.setText(`护盾 ${GameState.enemy.shield}`);
   } else {
     enemyShieldText.setText('');
   }
@@ -612,6 +687,45 @@ function updateEnemyUI(scene) {
   drawIntentIcon(scene, ex, intentIconY, GameState.enemy);
   enemyIntentText.setPosition(ex, intentTextY);
   enemyIntentText.setText(GameState.enemy.getIntentDescription());
+
+  // Boss 蓄力视觉：淡红色呼吸灯 + 头顶警告文字
+  const isBossCharging = GameState.enemy.pattern === ENEMY_PATTERN.BOSS_CHARGE &&
+                         GameState.enemy.currentCharge < GameState.enemy.chargeTurns;
+  if (isBossCharging) {
+    if (!bossChargeTween) {
+      enemySprite.setTint(0xff4444);
+      bossChargeTween = scene.tweens.add({
+        targets: enemySprite,
+        alpha: { from: 1, to: 0.55 },
+        duration: 500,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+      bossWarningText = scene.add.text(ex, ey - 125, '[ BOSS 正在疯狂凝聚地核能量... ]', {
+        fontSize: '20px',
+        fontFamily: '"Courier New", monospace',
+        color: '#ff4422',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 4,
+      }).setOrigin(0.5);
+      enemyContainer.add(bossWarningText);
+    }
+  } else {
+    if (bossChargeTween) {
+      bossChargeTween.stop();
+      bossChargeTween = null;
+    }
+    if (bossWarningText) {
+      bossWarningText.destroy();
+      bossWarningText = null;
+    }
+    if (enemySprite) {
+      enemySprite.clearTint();
+      enemySprite.setAlpha(1);
+    }
+  }
 }
 
 function drawIntentIcon(scene, cx, cy, enemy) {
@@ -624,7 +738,11 @@ function drawIntentIcon(scene, cx, cy, enemy) {
   else if (desc.includes('护盾') || desc.includes('防御')) type = 'shield';
   else if (desc.includes('伤害') || desc.includes('攻击')) type = 'damage';
 
-  const size = 18;
+  const size = 20;
+
+  // 意图图标暗色衬底，提升可见度
+  enemyIntentIcon.fillStyle(0x000000, 0.6);
+  enemyIntentIcon.fillCircle(cx, cy, size + 4);
   enemyIntentIcon.lineStyle(2, 0x000000, 0.8);
 
   switch (type) {
@@ -644,7 +762,7 @@ function drawIntentIcon(scene, cx, cy, enemy) {
       break;
     case 'chargedAttack':
       enemyIntentIcon.fillStyle(0xff00aa, 0.95);
-      enemyIntentIcon.fillStar(cx, cy, 5, size, size * 0.5);
+      drawStar(enemyIntentIcon, cx, cy, 5, size, size * 0.5);
       break;
     default:
       enemyIntentIcon.fillStyle(0x888888, 0.6);
@@ -717,7 +835,7 @@ function refreshUI(scene) {
 /* ============================================================
  * 数值飘字特效
  * ============================================================ */
-function spawnFloatingText(scene, target, text, color, offsetY) {
+function spawnFloatingText(scene, target, text, color, offsetY, fontSize = '20px') {
   let targetX, targetY;
 
   if (target === 'player') {
@@ -729,19 +847,19 @@ function spawnFloatingText(scene, target, text, color, offsetY) {
   }
 
   const ft = scene.add.text(targetX, targetY - 10, text, {
-    fontSize: '20px',
+    fontSize: fontSize,
     fontFamily: '"Courier New", monospace',
     color: color,
     fontStyle: 'bold',
     stroke: '#000000',
-    strokeThickness: 3,
+    strokeThickness: 4,
   }).setOrigin(0.5).setAlpha(1);
 
   scene.tweens.add({
     targets: ft,
-    y: targetY - 70,
+    y: targetY - 80,
     alpha: 0,
-    duration: 900,
+    duration: 1100,
     ease: 'Power2',
     onComplete: () => ft.destroy(),
   });
@@ -833,7 +951,7 @@ function createCardGraphics(scene, x, y, w, h, card, index) {
   bottomBar.fillRoundedRect(-w / 2 + 8, h / 2 - 10, w - 16, 4, 2);
   container.add(bottomBar);
 
-  const hitZone = scene.add.rectangle(0, 0, w, h, 0xffffff, 0)
+  const hitZone = scene.add.rectangle(0, 0, w + 12, h + 16, 0xffffff, 0)
     .setInteractive({ useHandCursor: true });
   container.add(hitZone);
 
@@ -891,7 +1009,7 @@ function createEndTurnButton(scene) {
   }).setOrigin(0.5);
   container.add(text);
 
-  const hitZone = scene.add.rectangle(0, 0, btnW, btnH, 0xffffff, 0)
+  const hitZone = scene.add.rectangle(0, 0, btnW + 20, btnH + 16, 0xffffff, 0)
     .setInteractive({ useHandCursor: true });
   container.add(hitZone);
 
@@ -1017,6 +1135,180 @@ function playTransitionToNextLevel(scene, callback) {
 }
 
 /* ============================================================
+ * 战后三选一卡牌奖励弹窗
+ * ============================================================ */
+function showCardRewardPopup(scene, rewards, onSelect) {
+  GameState.turnPhase = 'reward';
+
+  const overlay = scene.add.graphics();
+  overlay.fillStyle(0x000000, 0.85);
+  overlay.fillRect(0, 0, W, H);
+
+  const popupW = 760;
+  const popupH = 380;
+  const popupX = (W - popupW) / 2;
+  const popupY = (H - popupH) / 2;
+
+  const popup = scene.add.graphics();
+  // 深蓝科技背景
+  popup.fillStyle(0x0a1a2a, 0.96);
+  popup.fillRoundedRect(popupX, popupY, popupW, popupH, 18);
+  // 亮蓝主边框
+  popup.lineStyle(3, 0x33ccff, 1);
+  popup.strokeRoundedRect(popupX, popupY, popupW, popupH, 18);
+  // 内发光装饰线
+  popup.lineStyle(1, 0x66ffff, 0.5);
+  popup.strokeRoundedRect(popupX + 6, popupY + 6, popupW - 12, popupH - 12, 14);
+  // 顶部霓虹条
+  popup.fillStyle(0x33ccff, 0.9);
+  popup.fillRect(popupX + 30, popupY + 28, popupW - 60, 3);
+
+  const title = scene.add.text(W / 2, popupY + 55, '◆ 选择一张奖励卡牌 ◆', {
+    fontSize: '26px',
+    fontFamily: '"Courier New", monospace',
+    color: '#66ffff',
+    fontStyle: 'bold',
+    stroke: '#000000',
+    strokeThickness: 4,
+  }).setOrigin(0.5);
+
+  const hint = scene.add.text(W / 2, popupY + 92, '点击或触摸卡牌，将其加入抽牌堆', {
+    fontSize: '14px',
+    fontFamily: '"Courier New", monospace',
+    color: '#88ccdd',
+  }).setOrigin(0.5);
+
+  const cardW = 190;
+  const cardH = 220;
+  const gap = 28;
+  const totalW = rewards.length * cardW + (rewards.length - 1) * gap;
+  const startX = (W - totalW) / 2 + cardW / 2;
+  const cardY = popupY + 210;
+
+  const rewardObjects = [];
+
+  for (let i = 0; i < rewards.length; i++) {
+    const card = rewards[i];
+    const x = startX + i * (cardW + gap);
+
+    const container = scene.add.container(x, cardY);
+
+    // 卡牌背景
+    const bg = scene.add.graphics();
+    bg.fillStyle(0x112233, 0.98);
+    bg.fillRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 12);
+    bg.lineStyle(2, 0x33ccff, 0.9);
+    bg.strokeRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 12);
+    container.add(bg);
+
+    // 顶部颜色条
+    const topBar = scene.add.graphics();
+    topBar.fillStyle(card.color, 0.85);
+    topBar.fillRoundedRect(-cardW / 2 + 8, -cardH / 2 + 8, cardW - 16, 30, { tl: 6, tr: 6, bl: 0, br: 0 });
+    container.add(topBar);
+
+    // 费用圆
+    const costBg = scene.add.graphics();
+    costBg.fillStyle(0x000000, 0.7);
+    costBg.fillCircle(-cardW / 2 + 26, -cardH / 2 + 24, 17);
+    costBg.fillStyle(0xffdd44, 0.95);
+    costBg.fillCircle(-cardW / 2 + 26, -cardH / 2 + 24, 14);
+    container.add(costBg);
+
+    const costText = scene.add.text(-cardW / 2 + 26, -cardH / 2 + 24, `${card.cost}`, {
+      fontSize: '16px',
+      fontFamily: '"Courier New", monospace',
+      color: '#000000',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    container.add(costText);
+
+    // 卡牌名称
+    const nameText = scene.add.text(0, -cardH / 2 + 58, card.name, {
+      fontSize: '15px',
+      fontFamily: '"Courier New", monospace',
+      color: '#ffffff',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 3,
+      align: 'center',
+      wordWrap: { width: cardW - 20 },
+    }).setOrigin(0.5);
+    container.add(nameText);
+
+    // 卡牌描述
+    const descText = scene.add.text(0, 14, card.desc, {
+      fontSize: '13px',
+      fontFamily: '"Courier New", monospace',
+      color: '#cceeff',
+      align: 'center',
+      wordWrap: { width: cardW - 20 },
+      lineSpacing: 5,
+    }).setOrigin(0.5);
+    container.add(descText);
+
+    // 类型指示条
+    const typeColor = card.type === 'damage' ? 0xff4444 : (card.type === 'shield' ? 0x44aaff : 0xffdd00);
+    const typeBar = scene.add.graphics();
+    typeBar.fillStyle(typeColor, 0.7);
+    typeBar.fillRoundedRect(-cardW / 2 + 10, cardH / 2 - 18, cardW - 20, 7, 3);
+    container.add(typeBar);
+
+    // 点击/触摸热区（略大于卡牌，提升手机体验）
+    const hitZone = scene.add.rectangle(0, 0, cardW + 20, cardH + 20, 0xffffff, 0)
+      .setInteractive({ useHandCursor: true });
+    container.add(hitZone);
+
+    hitZone.on('pointerover', () => {
+      scene.tweens.add({ targets: container, scaleX: 1.06, scaleY: 1.06, duration: 100 });
+      bg.clear();
+      bg.fillStyle(0x1a3a5a, 0.99);
+      bg.fillRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 12);
+      bg.lineStyle(3, 0x66ffff, 1);
+      bg.strokeRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 12);
+    });
+
+    hitZone.on('pointerout', () => {
+      scene.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 100 });
+      bg.clear();
+      bg.fillStyle(0x112233, 0.98);
+      bg.fillRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 12);
+      bg.lineStyle(2, 0x33ccff, 0.9);
+      bg.strokeRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 12);
+    });
+
+    hitZone.on('pointerdown', () => {
+      // 禁用所有选项，防止重复选择
+      rewardObjects.forEach(r => r.hitZone.disableInteractive());
+
+      // 选中放大并消失
+      scene.tweens.add({
+        targets: container,
+        scaleX: 1.2,
+        scaleY: 1.2,
+        alpha: 0,
+        duration: 250,
+        ease: 'Back.easeIn',
+        onComplete: () => {
+          cleanup();
+          onSelect(card);
+        },
+      });
+    });
+
+    rewardObjects.push({ container, hitZone, bg });
+  }
+
+  function cleanup() {
+    overlay.destroy();
+    popup.destroy();
+    title.destroy();
+    hint.destroy();
+    rewardObjects.forEach(r => r.container.destroy());
+  }
+}
+
+/* ============================================================
  * 回合状态机
  * ============================================================ */
 function startPlayerTurn(scene) {
@@ -1114,6 +1406,18 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
     GameState.player.addShield(card.value);
     addLog(card.name, `获得 ${card.value} 点护盾`);
     spawnFloatingText(scene, 'player', `+${card.value} 护盾`, '#ffaa44');
+    if (card.heal) {
+      GameState.player.hp = Math.min(GameState.player.maxHp, GameState.player.hp + card.heal);
+      addLog(card.name, `恢复 ${card.heal} 点生命`);
+      spawnFloatingText(scene, 'player', `+${card.heal} HP`, '#33ff77', -20);
+    }
+  } else if (card.type === 'special') {
+    if (card.id === 'emergencyOverloadValve') {
+      GameState.player.battery += card.gainBattery;
+      GameState.player.damageTakenBonus = (GameState.player.damageTakenBonus || 0) + card.damageTakenBonus;
+      addLog(card.name, `获得 ${card.gainBattery} 点电量，本回合受伤 +${card.damageTakenBonus}`);
+      spawnFloatingText(scene, 'player', `+${card.gainBattery} 电量`, '#ffdd00');
+    }
   }
 
   GameState.hand.splice(index, 1);
@@ -1144,6 +1448,13 @@ function handleEnemyDefeated(scene) {
     addLog('系统', `敌军：${GameState.enemy.name} 出现了！`);
     scene.time.delayedCall(600, () => startPlayerTurn(scene));
   } else if (GameState.depthLevel === 2 && !GameState.isFinalBossDefeated) {
+    // 迎战最终 Boss 前固定获得史诗遗物：铥元素电池
+    if (!GameState.player.relics.some(r => r.id === RELICS.thuliumBattery.id)) {
+      GameState.player.addRelic(RELICS.thuliumBattery);
+      addLog('系统', `获得史诗遗物：${RELICS.thuliumBattery.name} — ${RELICS.thuliumBattery.desc}`);
+      refreshUI(scene);
+    }
+
     const overlay = scene.add.graphics();
     overlay.fillStyle(0x000000, 0);
     overlay.fillRect(0, 0, W, H);
@@ -1197,15 +1508,30 @@ function handleEnemyDefeated(scene) {
     });
   } else {
     if (GameState.depthLevel < DEPTH_LEVELS.length - 1) {
-      playTransitionToNextLevel(scene, () => {
-        advanceLevel(scene);
+      // 战后三选一奖励：先弹窗，选择后再进入下潜过渡动画
+      const rewards = rollPostBattleRewards(3);
+      showCardRewardPopup(scene, rewards, (selectedCard) => {
+        GameState.drawPile.cards.push(selectedCard);
+        addLog('系统', `获得奖励卡牌：${selectedCard.name}`);
         refreshUI(scene);
-        GameState.discardPile = GameState.discardPile.concat(GameState.hand);
-        GameState.hand = [];
-        GameState.drawPile.reshuffle(GameState.discardPile);
-        GameState.discardPile = [];
-        refreshUI(scene);
-        startPlayerTurn(scene);
+
+        playTransitionToNextLevel(scene, () => {
+          advanceLevel(scene);
+
+          // 进入第二层时固定获得基础遗物：火星动力核心
+          if (GameState.depthLevel === 1 && !GameState.player.relics.some(r => r.id === RELICS.marsPowerCore.id)) {
+            GameState.player.addRelic(RELICS.marsPowerCore);
+            addLog('系统', `获得遗物：${RELICS.marsPowerCore.name} — ${RELICS.marsPowerCore.desc}`);
+          }
+
+          refreshUI(scene);
+          GameState.discardPile = GameState.discardPile.concat(GameState.hand);
+          GameState.hand = [];
+          GameState.drawPile.reshuffle(GameState.discardPile);
+          GameState.discardPile = [];
+          refreshUI(scene);
+          startPlayerTurn(scene);
+        });
       });
     } else {
       gameOver(scene, 'victory');
@@ -1243,8 +1569,12 @@ function executeEnemyTurn(scene) {
 
   if (result.type === 'damage' || result.type === 'chargedAttack') {
     addLog(GameState.enemy.name, result.desc);
-    spawnFloatingText(scene, 'player', `-${result.value} HP`, '#ff4422');
+    spawnFloatingText(scene, 'player', `-${result.value} HP`, '#ff2211', 0,
+      result.type === 'chargedAttack' ? '38px' : '20px');
     shakePlayerUI(scene);
+    if (result.type === 'chargedAttack') {
+      scene.cameras.main.shake(500, 0.025);
+    }
   } else if (result.type === 'shield') {
     addLog(GameState.enemy.name, result.desc);
     spawnFloatingText(scene, 'enemy', `+${result.value} 护盾`, '#ffaa44');
