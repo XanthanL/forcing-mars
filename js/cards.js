@@ -431,16 +431,60 @@ function createCardInstance(def) {
 }
 
 /* ============================================================
- * 初始牌组（共 10 张）
+ * 诅咒卡系统
  * ============================================================ */
-function buildStarterDeck() {
+const CURSE_CARDS = {
+  voidCurse: {
+    id: 'voidCurse',
+    name: '虚空之咒',
+    cost: 0,
+    desc: '无法打出。占用手牌位。',
+    type: 'curse',
+    color: 0x660066,
+    rarity: 'curse',
+    curse: true,
+    unplayable: true,
+  },
+  parasite: {
+    id: 'parasite',
+    name: '寄生孢子',
+    cost: 0,
+    desc: '无法打出。回合结束时受到 1 点伤害。',
+    type: 'curse',
+    color: 0x336622,
+    rarity: 'curse',
+    curse: true,
+    unplayable: true,
+    endTurnDamage: 1,
+  },
+  frail: {
+    id: 'frail',
+    name: '虚弱之咒',
+    cost: 0,
+    desc: '无法打出。手牌中存在此卡时，受到伤害 +1。',
+    type: 'curse',
+    color: 0x553333,
+    rarity: 'curse',
+    curse: true,
+    unplayable: true,
+    damageAmplify: 1,
+  },
+};
+
+/** 随机创建一张诅咒卡实例 */
+function createCurseCard() {
+  const keys = Object.keys(CURSE_CARDS);
+  const key = keys[Math.floor(Math.random() * keys.length)];
+  return createCardInstance(CURSE_CARDS[key]);
+}
+
+/* ============================================================
+ * 初始牌组（按角色构建）
+ * ============================================================ */
+function buildStarterDeck(characterId = 'astronaut') {
+  const character = CHARACTERS[characterId] || CHARACTERS.astronaut;
   const deck = [];
-  const template = [
-    { def: 'laserShot',        count: 4 },
-    { def: 'overchargeBlast',  count: 1 },
-    { def: 'plasmaShield',     count: 4 },
-    { def: 'shieldMatrix',     count: 1 },
-  ];
+  const template = character.starterDeck;
   for (const entry of template) {
     for (let i = 0; i < entry.count; i++) {
       deck.push(createCardInstance(CARD_DEFS[entry.def]));

@@ -215,13 +215,91 @@ const RELICS = {
 };
 
 /* ============================================================
+ * 角色/职业定义
+ * ============================================================ */
+const CHARACTERS = {
+  astronaut: {
+    id: 'astronaut',
+    name: '宇航员',
+    title: '平衡的探索者',
+    desc: 'HP 80 / 电量 3。初始牌组均衡，适合新手。每回合开始时 10% 概率获得 1 点护盾。',
+    color: 0x4488cc,
+    maxHp: 80,
+    baseBattery: 3,
+    starterDeck: [
+      { def: 'laserShot', count: 4 },
+      { def: 'overchargeBlast', count: 1 },
+      { def: 'plasmaShield', count: 4 },
+      { def: 'shieldMatrix', count: 1 },
+    ],
+    passive: 'astronautShield',
+    sprite: 'player_astronaut',
+  },
+  engineer: {
+    id: 'engineer',
+    name: '工程兵',
+    title: '护盾大师',
+    desc: 'HP 70 / 电量 4。擅长护盾防御，初始牌组含护盾卡。出护盾卡时额外获得 2 点护盾。',
+    color: 0x44aa66,
+    maxHp: 70,
+    baseBattery: 4,
+    starterDeck: [
+      { def: 'laserShot', count: 2 },
+      { def: 'plasmaShield', count: 5 },
+      { def: 'shieldMatrix', count: 2 },
+      { def: 'nanoArmor', count: 1 },
+    ],
+    passive: 'engineerShieldBonus',
+    sprite: 'player_astronaut',
+  },
+  mutant: {
+    id: 'mutant',
+    name: '异变者',
+    title: '状态操控者',
+    desc: 'HP 75 / 电量 3。擅长灼烧和中毒，初始牌组含状态卡。施加状态效果时层数 +1。',
+    color: 0xaa44aa,
+    maxHp: 75,
+    baseBattery: 3,
+    starterDeck: [
+      { def: 'laserShot', count: 3 },
+      { def: 'plasmaBurn', count: 2 },
+      { def: 'corrosiveFog', count: 2 },
+      { def: 'plasmaShield', count: 2 },
+      { def: 'sporeRelease', count: 1 },
+    ],
+    passive: 'mutantStatusBonus',
+    sprite: 'player_astronaut',
+  },
+  assault: {
+    id: 'assault',
+    name: '突击兵',
+    title: '连击杀手',
+    desc: 'HP 65 / 电量 3。低血量高输出，初始牌组含多段攻击。打出攻击卡时 15% 概率获得 1 点电量。',
+    color: 0xcc4444,
+    maxHp: 65,
+    baseBattery: 3,
+    starterDeck: [
+      { def: 'laserShot', count: 5 },
+      { def: 'overchargeBlast', count: 2 },
+      { def: 'empCannon', count: 1 },
+      { def: 'plasmaShield', count: 2 },
+    ],
+    passive: 'assaultEnergyChance',
+    sprite: 'player_astronaut',
+  },
+};
+
+/* ============================================================
  * 玩家类
  * ============================================================ */
 class Player extends Entity {
-  constructor() {
-    super('宇航员', 80);
-    this.baseBattery = 3;
-    this.baseMaxHp = 80;
+  constructor(characterId = 'astronaut') {
+    const charConfig = CHARACTERS[characterId] || CHARACTERS.astronaut;
+    super(charConfig.name, charConfig.maxHp);
+    this.characterId = charConfig.id;
+    this.character = charConfig;
+    this.baseBattery = charConfig.baseBattery;
+    this.baseMaxHp = charConfig.maxHp;
     this.relics = [];
     this.damageTakenBonus = 0; // 本回合受到的伤害额外加值
 
@@ -460,8 +538,19 @@ const ENEMY_CATALOG = {
       { type: 'vulnerable', stacks: 3 },
       { type: 'burn', stacks: 2 },
     ],
+    // 阶段2配置（HP < 50% 时触发）
+    phase2: {
+      threshold: 0.5,
+      name: '火星吞噬者 · 狂暴',
+      chargeTurns: 1,          // 蓄力回合缩短
+      chargeDamage: 30,        // 伤害提升
+      statusEffect: [
+        { type: 'vulnerable', stacks: 3 },
+        { type: 'burn', stacks: 3 },
+        { type: 'weak', stacks: 1 },
+      ],
+    },
   },
-  /* ---------- 小 Boss（每层结尾遭遇） ---------- */
   sandTyrant: {
     key: 'sandTyrant',
     name: '沙暴暴君',
@@ -473,6 +562,15 @@ const ENEMY_CATALOG = {
       { type: 'damage', value: 12, statusEffect: { type: 'vulnerable', stacks: 2 } },
       { type: 'damage', value: 8 },
     ],
+    phase2: {
+      threshold: 0.5,
+      name: '沙暴暴君 · 狂暴',
+      actions: [
+        { type: 'shield', value: 6 },
+        { type: 'damage', value: 16, statusEffect: { type: 'vulnerable', stacks: 2 } },
+        { type: 'damage', value: 10, statusEffect: { type: 'weak', stacks: 1 } },
+      ],
+    },
   },
   crystalTitan: {
     key: 'crystalTitan',
@@ -483,6 +581,13 @@ const ENEMY_CATALOG = {
     baseDamage: 6,
     damageIncrement: 2,
     statusEffect: { type: 'poison', stacks: 2 },
+    phase2: {
+      threshold: 0.5,
+      name: '晶化巨像 · 狂暴',
+      baseDamage: 8,
+      damageIncrement: 3,
+      statusEffect: { type: 'poison', stacks: 3 },
+    },
   },
 };
 
@@ -527,6 +632,46 @@ class Enemy extends Entity {
 
     // 攻击附带的状态效果（RAMPING / BOSS_CHARGE 模式）
     this.attackStatusEffect = config.statusEffect || null;
+
+    // 阶段切换配置（Boss 专属）
+    this.phase2Config = config.phase2 || null;
+    this.phase = 1; // 当前阶段（1 或 2）
+    this.originalName = this.name;
+  }
+
+  /** 检查是否需要切换到阶段2，返回是否发生了切换 */
+  checkPhaseTransition() {
+    if (this.phase !== 1 || !this.phase2Config) return false;
+    const threshold = this.maxHp * this.phase2Config.threshold;
+    if (this.hp <= threshold) {
+      this.switchToPhase2();
+      return true;
+    }
+    return false;
+  }
+
+  /** 切换到阶段2：更新属性和技能 */
+  switchToPhase2() {
+    this.phase = 2;
+    const p2 = this.phase2Config;
+    this.name = p2.name || (this.originalName + ' · 狂暴');
+
+    // 更新 BOSS_CHARGE 属性
+    if (p2.chargeTurns !== undefined) this.chargeTurns = p2.chargeTurns;
+    if (p2.chargeDamage !== undefined) this.chargeDamage = p2.chargeDamage;
+
+    // 更新 ALTERNATING 行动
+    if (p2.actions) this.actions = p2.actions;
+
+    // 更新 RAMPING 属性
+    if (p2.baseDamage !== undefined) this.baseDamage = p2.baseDamage;
+    if (p2.damageIncrement !== undefined) this.damageIncrement = p2.damageIncrement;
+
+    // 更新状态效果
+    if (p2.statusEffect) this.attackStatusEffect = p2.statusEffect;
+
+    // 重置蓄力计数
+    this.currentCharge = 0;
   }
 
   /** 从图鉴 key 快速创建敌人实例 */

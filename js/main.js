@@ -195,7 +195,190 @@ function create() {
     return;
   }
 
-  startNewGame(this);
+  // 没有存档，显示角色选择
+  showCharacterSelection(this);
+}
+
+/** 显示角色选择界面 */
+function showCharacterSelection(scene) {
+  GameState.turnPhase = 'characterSelect';
+
+  const overlay = scene.add.graphics();
+  overlay.fillStyle(0x000000, 0.95);
+  overlay.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
+
+  // 标题
+  const title = scene.add.text(LAYOUT.W / 2, 60, '◆ 选择你的角色 ◆', {
+    fontSize: '32px',
+    fontFamily: '"Courier New", monospace',
+    color: '#66ddff',
+    fontStyle: 'bold',
+    stroke: '#000000',
+    strokeThickness: 4,
+  }).setOrigin(0.5);
+
+  const hint = scene.add.text(LAYOUT.W / 2, 105, '不同角色拥有不同的生命值、电量和被动技能', {
+    fontSize: '14px',
+    fontFamily: '"Courier New", monospace',
+    color: '#88aabb',
+  }).setOrigin(0.5);
+
+  // 角色卡片
+  const charKeys = Object.keys(CHARACTERS);
+  const cardW = isPortrait ? 140 : 160;
+  const cardH = isPortrait ? 360 : 400;
+  const gap = 16;
+  const totalW = charKeys.length * cardW + (charKeys.length - 1) * gap;
+  const startX = (LAYOUT.W - totalW) / 2 + cardW / 2;
+  const cardY = LAYOUT.H / 2 + 20;
+
+  const charCards = [];
+
+  for (let i = 0; i < charKeys.length; i++) {
+    const char = CHARACTERS[charKeys[i]];
+    const x = startX + i * (cardW + gap);
+
+    const container = scene.add.container(x, cardY);
+    const bg = scene.add.graphics();
+    const drawBg = (highlighted, selected) => {
+      bg.clear();
+      bg.fillStyle(highlighted ? 0x1a2a3a : 0x0a1525, 0.98);
+      bg.fillRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 14);
+      bg.lineStyle(highlighted ? 3 : 2, highlighted ? 0x66ffff : char.color, highlighted ? 1 : 0.8);
+      bg.strokeRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 14);
+    };
+    drawBg(false, false);
+    container.add(bg);
+
+    // 顶部颜色条
+    const topBar = scene.add.graphics();
+    topBar.fillStyle(char.color, 0.85);
+    topBar.fillRoundedRect(-cardW / 2 + 8, -cardH / 2 + 8, cardW - 16, 32, { tl: 7, tr: 7, bl: 0, br: 0 });
+    container.add(topBar);
+
+    // 角色名
+    const nameText = scene.add.text(0, -cardH / 2 + 24, char.name, {
+      fontSize: '20px',
+      fontFamily: '"Courier New", monospace',
+      color: '#ffffff',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 3,
+    }).setOrigin(0.5);
+    container.add(nameText);
+
+    // 角色标题
+    const titleText = scene.add.text(0, -cardH / 2 + 60, char.title, {
+      fontSize: '12px',
+      fontFamily: '"Courier New", monospace',
+      color: '#aacccc',
+      fontStyle: 'italic',
+    }).setOrigin(0.5);
+    container.add(titleText);
+
+    // 角色立绘占位（彩色方块）
+    const avatar = scene.add.graphics();
+    avatar.fillStyle(char.color, 0.4);
+    avatar.fillRoundedRect(-40, -cardH / 2 + 80, 80, 80, 10);
+    avatar.lineStyle(2, char.color, 0.8);
+    avatar.strokeRoundedRect(-40, -cardH / 2 + 80, 80, 80, 10);
+    container.add(avatar);
+
+    // 属性
+    const statsY = -cardH / 2 + 180;
+    const hpText = scene.add.text(0, statsY, `♥ ${char.maxHp} HP`, {
+      fontSize: '14px',
+      fontFamily: '"Courier New", monospace',
+      color: '#ff6666',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    container.add(hpText);
+
+    const batteryText = scene.add.text(0, statsY + 22, `⚡ ${char.baseBattery} 电量`, {
+      fontSize: '14px',
+      fontFamily: '"Courier New", monospace',
+      color: '#33ccff',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    container.add(batteryText);
+
+    // 描述
+    const descText = scene.add.text(0, statsY + 60, char.desc, {
+      fontSize: '11px',
+      fontFamily: '"Courier New", monospace',
+      color: '#ddeeff',
+      align: 'center',
+      wordWrap: { width: cardW - 16 },
+      lineSpacing: 4,
+    }).setOrigin(0.5);
+    container.add(descText);
+
+    // 点击热区
+    const hitZone = scene.add.rectangle(0, 0, cardW + 8, cardH + 8, 0xffffff, 0)
+      .setInteractive({ useHandCursor: true });
+    container.add(hitZone);
+
+    hitZone.on('pointerover', () => {
+      scene.tweens.add({ targets: container, scaleX: 1.05, scaleY: 1.05, duration: 100 });
+      drawBg(true, false);
+    });
+    hitZone.on('pointerout', () => {
+      scene.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 100 });
+      drawBg(false, false);
+    });
+    hitZone.on('pointerdown', () => {
+      charCards.forEach(c => c.hitZone.disableInteractive());
+      scene.tweens.add({
+        targets: container,
+        scaleX: 1.2, scaleY: 1.2, alpha: 0,
+        duration: 300,
+        ease: 'Back.easeIn',
+        onComplete: () => {
+          overlay.destroy();
+          title.destroy();
+          hint.destroy();
+          charCards.forEach(c => c.container.destroy());
+          startNewGameWithCharacter(scene, char.id);
+        },
+      });
+    });
+
+    charCards.push({ container, hitZone, bg });
+  }
+}
+
+/** 开始新游戏（指定角色） */
+function startNewGameWithCharacter(scene, characterId) {
+  GameState.player = new Player(characterId);
+  GameState.depthLevel = 0;
+  GameState.isFinalBossDefeated = false;
+  GameState.turnPhase = 'idle';
+  GameState.hand = [];
+  GameState.discardPile = [];
+  GameState.drawPile = new DrawPile(buildStarterDeck(characterId));
+  GameState.cardContainers = [];
+  GameState.logLines = [];
+  GameState.potions = [];
+  GameState.potionContainers = [];
+  GameState.currentMapNodes = [];
+  GameState.visitedNodes = [];
+  GameState.nodeBattleCount = 0;
+  GameState.battlesPerLayer = 2;
+  GameState.currentMapData = null;
+  GameState.gold = 0;
+  GameState.isMiniBossBattle = false;
+
+  initLevel(GameState.depthLevel);
+  setupScene(scene);
+
+  addLog('系统', `=== 强渡火星 ===`);
+  addLog('系统', `角色：${GameState.player.name} — ${GameState.player.character.title}`);
+  addLog('系统', `当前深度：${DEPTH_LEVELS[GameState.depthLevel].label}`);
+
+  refreshUI(scene);
+  scene.time.delayedCall(500, () => {
+    showMapSelectionPopup(scene, (node) => handleMapNodeSelected(scene, node));
+  });
 }
 
 /** 显示存档加载提示 */
@@ -337,40 +520,9 @@ function showSaveLoadPrompt(scene) {
   });
 }
 
-/** 开始新游戏 */
+/** 开始新游戏（旧入口，默认宇航员） */
 function startNewGame(scene) {
-  /* ---------- 初始化 ---------- */
-  GameState.player = new Player();
-  GameState.depthLevel = 0;
-  GameState.isFinalBossDefeated = false;
-  GameState.turnPhase = 'idle';
-  GameState.hand = [];
-  GameState.discardPile = [];
-  GameState.drawPile = new DrawPile(buildStarterDeck());
-  GameState.cardContainers = [];
-  GameState.logLines = [];
-  GameState.potions = [];
-  GameState.potionContainers = [];
-  GameState.currentMapNodes = [];
-  GameState.visitedNodes = [];
-  GameState.nodeBattleCount = 0;
-  GameState.battlesPerLayer = 2;
-  GameState.currentMapData = null;
-  GameState.gold = 0;
-  GameState.isMiniBossBattle = false;
-
-  initLevel(GameState.depthLevel);
-  setupScene(scene);
-
-  addLog('系统', `=== 强渡火星 ===`);
-  addLog('系统', `当前深度：${DEPTH_LEVELS[GameState.depthLevel].label}`);
-  addLog('系统', `选择下潜路径...`);
-
-  refreshUI(scene);
-  // 新游戏：显示地图选择
-  scene.time.delayedCall(500, () => {
-    showMapSelectionPopup(scene, (node) => handleMapNodeSelected(scene, node));
-  });
+  startNewGameWithCharacter(scene, 'astronaut');
 }
 
 /** 场景 UI 初始化（新游戏和加载存档共用） */
@@ -1446,19 +1598,89 @@ function createCardGraphics(scene, x, y, w, h, card, index) {
   container.add(bottomBar);
 
   const hitZone = scene.add.rectangle(0, 0, w + 12, h + 16, 0xffffff, 0)
-    .setInteractive({ useHandCursor: true });
+    .setInteractive({ useHandCursor: true, draggable: true });
   container.add(hitZone);
 
   let origY = y;
+  let isDragging = false;
+  let dragStartY = 0;
+  let hoverTween = null;
+
+  // 诅咒卡无法打出
+  const isUnplayable = card.unplayable || card.curse;
 
   hitZone.on('pointerdown', () => {
     if (GameState.turnPhase !== 'playerTurn') return;
-    playCard(scene, index, container, x, origY);
+    dragStartY = scene.input.activePointer.y;
+  });
+
+  hitZone.on('dragstart', () => {
+    if (GameState.turnPhase !== 'playerTurn' || isUnplayable) return;
+    isDragging = true;
+    container.setDepth(1000);
+    bg.setTint(0xffeebb);
+  });
+
+  hitZone.on('drag', (pointer) => {
+    if (!isDragging) return;
+    container.x = pointer.x;
+    container.y = pointer.y;
+    // 拖拽时缩放放大
+    const dist = Math.abs(pointer.y - origY);
+    const scale = 1 + Math.min(dist / 300, 0.3);
+    container.setScale(scale);
+  });
+
+  hitZone.on('dragend', (pointer) => {
+    if (!isDragging) return;
+    isDragging = false;
+    container.setDepth(0);
+
+    const dragDistance = pointer.y - dragStartY;
+    // 向上拖拽超过 80 像素，且电量足够，且非诅咒卡 → 出牌
+    if (dragDistance < -80 && canPlay && !isUnplayable) {
+      // 检查是否拖到敌人区域（横屏在右侧，竖屏在上方）
+      const enemyY = LAYOUT.enemyY;
+      const enemyX = LAYOUT.enemyX;
+      const distToEnemy = Math.hypot(pointer.x - enemyX, pointer.y - enemyY);
+      // 拖到敌人附近 或 向上拖够距离 都可以出牌
+      if (distToEnemy < 200 || dragDistance < -150) {
+        bg.clearTint();
+        container.setScale(1);
+        playCard(scene, index, container, x, origY);
+        return;
+      }
+    }
+
+    // 未出牌：回到原位
+    scene.tweens.add({
+      targets: container,
+      x: x, y: origY, scaleX: 1, scaleY: 1,
+      duration: 200,
+      ease: 'Back.easeOut',
+      onComplete: () => { bg.clearTint(); },
+    });
+  });
+
+  // 保留点击出牌（非拖拽时）
+  hitZone.on('pointerup', () => {
+    if (GameState.turnPhase !== 'playerTurn') return;
+    if (isDragging) return; // 拖拽中不触发点击
+    if (isUnplayable) {
+      // 诅咒卡提示
+      spawnFloatingText(scene, 'player', '此卡无法打出', '#aa66aa', -30, '14px');
+      return;
+    }
+    // 点击出牌（短按）
+    const clickDist = Math.abs(scene.input.activePointer.y - dragStartY);
+    if (clickDist < 10) {
+      playCard(scene, index, container, x, origY);
+    }
   });
 
   hitZone.on('pointerover', () => {
-    if (!canPlay) return;
-    scene.tweens.add({
+    if (!canPlay || isUnplayable) return;
+    hoverTween = scene.tweens.add({
       targets: container,
       y: origY - 16,
       duration: 80,
@@ -1467,6 +1689,7 @@ function createCardGraphics(scene, x, y, w, h, card, index) {
     bg.setTint(0xffddaa);
   });
   hitZone.on('pointerout', () => {
+    if (hoverTween) hoverTween.stop();
     scene.tweens.add({
       targets: container,
       y: origY,
@@ -2867,6 +3090,122 @@ const RANDOM_EVENTS = [
       { text: '搜刮（50% 获得药水，50% 失去 10 HP）', effect: 'gamble' },
     ],
   },
+  /* ---------- 新增事件（方向1扩充） ---------- */
+  {
+    id: 'altar',
+    name: '血色祭坛',
+    desc: '一座浸满暗红色液体的祭坛，散发着不祥的气息。似乎可以用生命换取力量',
+    options: [
+      { text: '献祭 20 HP，获得 5 层力量', effect: 'altarSacrifice' },
+      { text: '献祭 10 HP，获得 30 金币', effect: 'altarGold' },
+      { text: '离开', effect: 'none' },
+    ],
+  },
+  {
+    id: 'rift',
+    name: '时空裂缝',
+    desc: '一道闪烁的时空裂缝出现在眼前，里面似乎有什么在召唤你',
+    options: [
+      { text: '跳入裂缝（移除 1 张卡，获得遗物）', effect: 'riftRelic' },
+      { text: '汲取能量（+2 电量上限，-12 HP）', effect: 'riftBattery' },
+      { text: '离开', effect: 'none' },
+    ],
+  },
+  {
+    id: 'terminal',
+    name: '古老终端',
+    desc: '一台仍在运行的远古终端，屏幕上闪烁着「卡牌变异协议」字样',
+    options: [
+      { text: '执行变异（随机升级 1 张卡，获得诅咒卡）', effect: 'terminalMutate' },
+      { text: '下载数据（获得 25 金币）', effect: 'terminalGold' },
+      { text: '离开', effect: 'none' },
+    ],
+  },
+  {
+    id: 'crystal',
+    name: '晶簇巢穴',
+    desc: '巨大的水晶簇中封存着远古能量，但触碰可能引发共振',
+    options: [
+      { text: '开采水晶（获得 15 金币，-6 HP）', effect: 'crystalMine' },
+      { text: '吸收能量（获得 4 层灼烧抗性 → 获得 10 护盾）', effect: 'crystalAbsorb' },
+    ],
+  },
+  {
+    id: 'survivor',
+    name: '幸存者营地',
+    desc: '遇到一群火星殖民地的幸存者，他们愿意提供帮助',
+    options: [
+      { text: '接受治疗（恢复 15 HP）', effect: 'survivorHeal' },
+      { text: '接受物资（获得 2 张随机卡牌）', effect: 'survivorCards' },
+      { text: '分享金币（-20 金币，获得药水）', effect: 'survivorShare' },
+    ],
+  },
+  {
+    id: 'void',
+    name: '虚空凝视',
+    desc: '一片纯黑的虚空在你面前展开，凝视它的人会获得禁忌知识',
+    options: [
+      { text: '凝视虚空（获得 3 张随机卡，HP 降至 1）', effect: 'voidGaze' },
+      { text: '移开视线（获得 5 层力量）', effect: 'voidReject' },
+    ],
+  },
+  {
+    id: 'forge',
+    name: '地下熔炉',
+    desc: '一座仍在燃烧的远古熔炉，可以锻造卡牌或销毁诅咒',
+    options: [
+      { text: '锻造升级（升级 1 张卡，-15 金币）', effect: 'forgeUpgrade' },
+      { text: '销毁诅咒（移除 1 张诅咒卡）', effect: 'forgeCleanse' },
+      { text: '熔炼卡牌（移除 1 张卡，获得 20 金币）', effect: 'forgeMelt' },
+    ],
+  },
+  {
+    id: 'spore',
+    name: '孢子花园',
+    desc: '一片充满荧光孢子的地下花园，空气中弥漫着甜腻的气味',
+    options: [
+      { text: '吸入孢子（获得 8 层中毒抗性 → 获得 6 力量）', effect: 'sporeInhale' },
+      { text: '采集样本（获得药水）', effect: 'sporeCollect' },
+      { text: '快速离开（+5 护盾）', effect: 'safeLeave' },
+    ],
+  },
+  {
+    id: 'wreckage',
+    name: '坠毁飞船',
+    desc: '一坠毁的远古飞船，舱内可能有宝物也可能有危险',
+    options: [
+      { text: '搜索驾驶舱（50% 获得遗物，50% 爆炸受伤）', effect: 'wreckageCockpit' },
+      { text: '搜索货舱（获得 20-40 金币）', effect: 'wreckageCargo' },
+    ],
+  },
+  {
+    id: 'mirror',
+    name: '幻影之镜',
+    desc: '一面映照出你内心深处恐惧的神秘镜面',
+    options: [
+      { text: '直面恐惧（-15 HP，获得 4 层力量和 4 层易伤抗性）', effect: 'mirrorFace' },
+      { text: '打破镜面（获得 15 金币，获得诅咒卡）', effect: 'mirrorBreak' },
+      { text: '离开', effect: 'none' },
+    ],
+  },
+  {
+    id: 'core',
+    name: '能量核心',
+    desc: '一个脉动的地核能量节点，可以直接汲取能量',
+    options: [
+      { text: '汲取大量能量（+2 电量上限，获得 5 层灼烧）', effect: 'coreDrain' },
+      { text: '温和汲取（+1 电量上限）', effect: 'coreGentle' },
+    ],
+  },
+  {
+    id: 'ghost',
+    name: '游魂低语',
+    desc: '一个远古火星人的游魂在你耳边低语，提出诡异的交易',
+    options: [
+      { text: '接受交易（移除 2 张卡，获得随机遗物）', effect: 'ghostTrade' },
+      { text: '驱逐游魂（+8 护盾）', effect: 'ghostBanish' },
+    ],
+  },
 ];
 
 function triggerRandomEvent(scene, onComplete) {
@@ -2959,7 +3298,11 @@ function triggerRandomEvent(scene, onComplete) {
     btnHit.on('pointerdown', () => {
       // 禁用所有按钮
       btnContainers.forEach(b => b.hitZone.disableInteractive());
-      resolveEventEffect(scene, opt.effect);
+      // 先尝试新事件效果，失败则走旧效果
+      const handled = resolveNewEventEffect(scene, opt.effect);
+      if (!handled) {
+        resolveEventEffect(scene, opt.effect);
+      }
       overlay.destroy();
       popup.destroy();
       title.destroy();
@@ -3049,6 +3392,289 @@ function resolveEventEffect(scene, effect) {
       break;
   }
   refreshUI(scene);
+}
+
+/** 获取牌组中可移除的卡牌（非诅咒、非初始必需） */
+function getRemovableCards() {
+  return GameState.drawPile.cards.filter(c => !c.curse);
+}
+
+/** 随机移除一张卡牌，返回被移除的卡或 null */
+function removeRandomCard() {
+  const removable = getRemovableCards();
+  if (removable.length === 0) return null;
+  const card = removable[Math.floor(Math.random() * removable.length)];
+  const idx = GameState.drawPile.cards.findIndex(c => c.uid === card.uid);
+  if (idx >= 0) GameState.drawPile.cards.splice(idx, 1);
+  return card;
+}
+
+/** 解析新增事件效果 */
+function resolveNewEventEffect(scene, effect) {
+  switch (effect) {
+    case 'altarSacrifice': {
+      GameState.player.hp = Math.max(1, GameState.player.hp - 20);
+      GameState.player.addStatus('strength', 5);
+      addLog('事件', `血色祭坛：-20 HP，+5 力量`);
+      spawnFloatingText(scene, 'player', `-20 HP +5力量`, '#ff44ff', -20, '14px');
+      break;
+    }
+    case 'altarGold': {
+      GameState.player.hp = Math.max(1, GameState.player.hp - 10);
+      GameState.gold += 30;
+      addLog('事件', `血色祭坛：-10 HP，+30 金币`);
+      spawnFloatingText(scene, 'player', `-10 HP +30金币`, '#ffdd44', -20, '14px');
+      break;
+    }
+    case 'riftRelic': {
+      const removed = removeRandomCard();
+      if (removed) {
+        const relicKeys = Object.keys(RELICS).filter(k =>
+          !GameState.player.relics.some(r => r.id === RELICS[k].id));
+        if (relicKeys.length > 0) {
+          const key = relicKeys[Math.floor(Math.random() * relicKeys.length)];
+          GameState.player.addRelic(RELICS[key]);
+          addLog('事件', `时空裂缝：移除 ${removed.name}，获得遗物 ${RELICS[key].name}`);
+        } else {
+          addLog('事件', `时空裂缝：移除 ${removed.name}，但已无新遗物`);
+        }
+      } else {
+        addLog('事件', `时空裂缝：没有可移除的卡牌`);
+      }
+      break;
+    }
+    case 'riftBattery': {
+      GameState.player.hp = Math.max(1, GameState.player.hp - 12);
+      GameState.player.baseBattery += 2;
+      addLog('事件', `时空裂缝：-12 HP，+2 电量上限`);
+      spawnFloatingText(scene, 'player', `-12 HP +2电量`, '#33ccff', -20, '14px');
+      break;
+    }
+    case 'terminalMutate': {
+      const upgradable = GameState.drawPile.cards.filter(c => !c.upgraded && UPGRADES[c.id]);
+      if (upgradable.length > 0) {
+        const card = upgradable[Math.floor(Math.random() * upgradable.length)];
+        const upgraded = upgradeCard(card);
+        const idx = GameState.drawPile.cards.findIndex(c => c.uid === card.uid);
+        if (idx >= 0) GameState.drawPile.cards[idx] = upgraded;
+        addLog('事件', `古老终端：${card.name} 升级为 ${upgraded.name}`);
+      }
+      // 添加诅咒卡
+      GameState.drawPile.cards.push(createCurseCard());
+      addLog('事件', `古老终端：获得诅咒卡 — 虚空之咒`);
+      break;
+    }
+    case 'terminalGold': {
+      GameState.gold += 25;
+      addLog('事件', `古老终端：+25 金币`);
+      spawnFloatingText(scene, 'player', `+25 金币`, '#ffdd44', 40, '16px');
+      break;
+    }
+    case 'crystalMine': {
+      GameState.player.hp = Math.max(1, GameState.player.hp - 6);
+      GameState.gold += 15;
+      addLog('事件', `晶簇巢穴：-6 HP，+15 金币`);
+      spawnFloatingText(scene, 'player', `-6 HP +15金币`, '#ffdd44', -20, '14px');
+      break;
+    }
+    case 'crystalAbsorb': {
+      GameState.player.addShield(10);
+      addLog('事件', `晶簇巢穴：+10 护盾`);
+      spawnFloatingText(scene, 'player', `+10 护盾`, '#44aaff', 20, '16px');
+      break;
+    }
+    case 'survivorHeal': {
+      const heal = Math.min(15, GameState.player.maxHp - GameState.player.hp);
+      GameState.player.hp += heal;
+      addLog('事件', `幸存者：+${heal} HP`);
+      spawnFloatingText(scene, 'player', `+${heal} HP`, '#33ff77', 40, '18px');
+      break;
+    }
+    case 'survivorCards': {
+      for (let i = 0; i < 2; i++) {
+        const rewards = rollPostBattleRewards(1);
+        if (rewards[0]) {
+          GameState.drawPile.cards.push(rewards[0]);
+          addLog('事件', `幸存者：获得卡牌 ${rewards[0].name}`);
+        }
+      }
+      break;
+    }
+    case 'survivorShare': {
+      if (GameState.gold >= 20) {
+        GameState.gold -= 20;
+        if (GameState.potions.length < GameState.MAX_POTIONS) {
+          const potion = rollPotionReward();
+          tryAddPotion(potion);
+          addLog('事件', `幸存者：-20 金币，获得药水 ${potion.name}`);
+        } else {
+          addLog('事件', `药水槽已满，-20 金币换得 10 护盾`);
+          GameState.player.addShield(10);
+        }
+      } else {
+        addLog('事件', `金币不足，幸存者给了你 5 护盾`);
+        GameState.player.addShield(5);
+      }
+      break;
+    }
+    case 'voidGaze': {
+      GameState.player.hp = 1;
+      for (let i = 0; i < 3; i++) {
+        const rewards = rollPostBattleRewards(1);
+        if (rewards[0]) {
+          GameState.drawPile.cards.push(rewards[0]);
+          addLog('事件', `虚空凝视：获得卡牌 ${rewards[0].name}`);
+        }
+      }
+      spawnFloatingText(scene, 'player', `HP降至1 +3张卡`, '#ff44ff', -20, '14px');
+      break;
+    }
+    case 'voidReject': {
+      GameState.player.addStatus('strength', 5);
+      addLog('事件', `虚空凝视：+5 力量`);
+      spawnFloatingText(scene, 'player', `+5 力量`, '#ff44ff', 20, '16px');
+      break;
+    }
+    case 'forgeUpgrade': {
+      if (GameState.gold >= 15) {
+        GameState.gold -= 15;
+        const upgradable = GameState.drawPile.cards.filter(c => !c.upgraded && UPGRADES[c.id]);
+        if (upgradable.length > 0) {
+          const card = upgradable[Math.floor(Math.random() * upgradable.length)];
+          const upgraded = upgradeCard(card);
+          const idx = GameState.drawPile.cards.findIndex(c => c.uid === card.uid);
+          if (idx >= 0) GameState.drawPile.cards[idx] = upgraded;
+          addLog('事件', `地下熔炉：${card.name} 升级为 ${upgraded.name}`);
+        } else {
+          addLog('事件', `地下熔炉：无可升级卡牌，退还 15 金币`);
+          GameState.gold += 15;
+        }
+      } else {
+        addLog('事件', `金币不足`);
+      }
+      break;
+    }
+    case 'forgeCleanse': {
+      const curseCards = GameState.drawPile.cards.filter(c => c.curse);
+      if (curseCards.length > 0) {
+        const idx = GameState.drawPile.cards.findIndex(c => c.uid === curseCards[0].uid);
+        if (idx >= 0) GameState.drawPile.cards.splice(idx, 1);
+        addLog('事件', `地下熔炉：销毁诅咒卡 ${curseCards[0].name}`);
+      } else {
+        addLog('事件', `地下熔炉：没有诅咒卡可销毁`);
+      }
+      break;
+    }
+    case 'forgeMelt': {
+      const removed = removeRandomCard();
+      if (removed) {
+        GameState.gold += 20;
+        addLog('事件', `地下熔炉：熔炼 ${removed.name}，+20 金币`);
+      } else {
+        addLog('事件', `地下熔炉：没有可熔炼的卡牌`);
+      }
+      break;
+    }
+    case 'sporeInhale': {
+      GameState.player.addStatus('strength', 6);
+      GameState.player.addStatus('poison', 8);
+      addLog('事件', `孢子花园：+6 力量，+8 中毒`);
+      spawnFloatingText(scene, 'player', `+6力量 +8中毒`, '#66ff44', -20, '14px');
+      break;
+    }
+    case 'sporeCollect': {
+      if (GameState.potions.length < GameState.MAX_POTIONS) {
+        const potion = rollPotionReward();
+        tryAddPotion(potion);
+        addLog('事件', `孢子花园：获得药水 ${potion.name}`);
+      } else {
+        addLog('事件', `药水槽已满`);
+      }
+      break;
+    }
+    case 'wreckageCockpit': {
+      if (Math.random() < 0.5) {
+        const relicKeys = Object.keys(RELICS).filter(k =>
+          !GameState.player.relics.some(r => r.id === RELICS[k].id));
+        if (relicKeys.length > 0) {
+          const key = relicKeys[Math.floor(Math.random() * relicKeys.length)];
+          GameState.player.addRelic(RELICS[key]);
+          addLog('事件', `坠毁飞船：获得遗物 ${RELICS[key].name}`);
+        } else {
+          GameState.gold += 30;
+          addLog('事件', `坠毁飞船：获得 30 金币`);
+        }
+      } else {
+        GameState.player.hp = Math.max(1, GameState.player.hp - 15);
+        addLog('事件', `坠毁飞船：爆炸！-15 HP`);
+        spawnFloatingText(scene, 'player', `-15 HP`, '#ff4444', -20, '18px');
+      }
+      break;
+    }
+    case 'wreckageCargo': {
+      const gold = 20 + Math.floor(Math.random() * 21);
+      GameState.gold += gold;
+      addLog('事件', `坠毁飞船：获得 ${gold} 金币`);
+      spawnFloatingText(scene, 'player', `+${gold} 金币`, '#ffdd44', 40, '16px');
+      break;
+    }
+    case 'mirrorFace': {
+      GameState.player.hp = Math.max(1, GameState.player.hp - 15);
+      GameState.player.addStatus('strength', 4);
+      addLog('事件', `幻影之镜：-15 HP，+4 力量`);
+      spawnFloatingText(scene, 'player', `-15 HP +4力量`, '#ff44ff', -20, '14px');
+      break;
+    }
+    case 'mirrorBreak': {
+      GameState.gold += 15;
+      GameState.drawPile.cards.push(createCurseCard());
+      addLog('事件', `幻影之镜：+15 金币，获得诅咒卡`);
+      break;
+    }
+    case 'coreDrain': {
+      GameState.player.baseBattery += 2;
+      GameState.player.addStatus('burn', 5);
+      addLog('事件', `能量核心：+2 电量上限，+5 灼烧`);
+      spawnFloatingText(scene, 'player', `+2电量 +5灼烧`, '#ff6600', -20, '14px');
+      break;
+    }
+    case 'coreGentle': {
+      GameState.player.baseBattery += 1;
+      addLog('事件', `能量核心：+1 电量上限`);
+      spawnFloatingText(scene, 'player', `+1 电量上限`, '#33ccff', 20, '16px');
+      break;
+    }
+    case 'ghostTrade': {
+      const removed1 = removeRandomCard();
+      const removed2 = removeRandomCard();
+      if (removed1 || removed2) {
+        const relicKeys = Object.keys(RELICS).filter(k =>
+          !GameState.player.relics.some(r => r.id === RELICS[k].id));
+        if (relicKeys.length > 0) {
+          const key = relicKeys[Math.floor(Math.random() * relicKeys.length)];
+          GameState.player.addRelic(RELICS[key]);
+          addLog('事件', `游魂交易：移除卡牌，获得遗物 ${RELICS[key].name}`);
+        } else {
+          GameState.gold += 40;
+          addLog('事件', `游魂交易：移除卡牌，获得 40 金币`);
+        }
+      } else {
+        addLog('事件', `游魂交易：没有可移除的卡牌`);
+      }
+      break;
+    }
+    case 'ghostBanish': {
+      GameState.player.addShield(8);
+      addLog('事件', `游魂低语：+8 护盾`);
+      spawnFloatingText(scene, 'player', `+8 护盾`, '#44aaff', 20, '16px');
+      break;
+    }
+    default:
+      // 未知效果交给旧函数处理
+      return false;
+  }
+  refreshUI(scene);
+  return true;
 }
 
 /** Boss 战序列 */
@@ -3699,6 +4325,9 @@ function startPlayerTurn(scene) {
     return;
   }
 
+  // 角色被动技能触发（回合开始）
+  triggerPassiveOnTurnStart(scene);
+
   // 遗物触发：深空目镜（每回合多抽1张牌）
   const extraDraw = GameState.player.getRelicBonus('extraDraw');
   const baseDraw = 4;
@@ -3737,6 +4366,9 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
   }
 
   GameState.player.spendBattery(card.cost);
+
+  // 触发角色出牌被动
+  triggerPassiveOnPlayCard(scene, card);
 
   // 动画：卡牌飞出
   const w = CARD_W, h = CARD_H;
@@ -3862,6 +4494,14 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
       GameState.player.hp = Math.max(0, GameState.player.hp - card.selfDamage);
       addLog(card.name, `失去 ${card.selfDamage} 点生命`);
       spawnFloatingText(scene, 'player', `-${card.selfDamage} HP`, '#ff4444', -20);
+    }
+
+    // 检查 Boss 阶段切换
+    if (GameState.enemy.isAlive && GameState.enemy.checkPhaseTransition()) {
+      addLog('系统', `⚠ ${GameState.enemy.name} 进入狂暴状态！⚠`);
+      spawnFloatingText(scene, 'enemy', '狂暴化！', '#ff00ff', -50, '24px');
+      scene.cameras.main.shake(400, 0.015);
+      scene.cameras.main.flash(200, 255, 0, 100);
     }
   } else if (card.type === 'shield') {
     let shieldAmount = card.value;
@@ -4412,5 +5052,62 @@ function hasSave() {
 function autoSave() {
   if (GameState.turnPhase !== 'gameOver') {
     saveGame();
+  }
+}
+
+/* ============================================================
+ * 角色被动技能系统
+ * ============================================================ */
+
+/** 回合开始时触发的被动 */
+function triggerPassiveOnTurnStart(scene) {
+  const passive = GameState.player.character.passive;
+  switch (passive) {
+    case 'astronautShield':
+      // 宇航员：10% 概率获得 1 点护盾
+      if (Math.random() < 0.10) {
+        GameState.player.addShield(1);
+        addLog('被动', `宇航员：获得 1 点护盾`);
+        spawnFloatingText(scene, 'player', `+1 护盾`, '#44aaff', 20, '12px');
+      }
+      break;
+    // 工程兵/异变者/突击兵的被动在出牌时触发
+    case 'engineerShieldBonus':
+    case 'mutantStatusBonus':
+    case 'assaultEnergyChance':
+      break;
+  }
+}
+
+/** 出牌时触发的被动，返回附加效果 */
+function triggerPassiveOnPlayCard(scene, card) {
+  const passive = GameState.player.character.passive;
+  switch (passive) {
+    case 'engineerShieldBonus':
+      // 工程兵：出护盾卡时额外获得 2 点护盾
+      if (card.type === 'shield') {
+        GameState.player.addShield(2);
+        addLog('被动', `工程兵：额外获得 2 点护盾`);
+        spawnFloatingText(scene, 'player', `+2 护盾`, '#44aaff', 30, '12px');
+      }
+      break;
+    case 'mutantStatusBonus':
+      // 异变者：施加状态效果时层数 +1
+      if (card.statusEffect) {
+        const effects = Array.isArray(card.statusEffect) ? card.statusEffect : [card.statusEffect];
+        for (const eff of effects) {
+          GameState.enemy.addStatus(eff.type, 1);
+        }
+        addLog('被动', `异变者：状态效果 +1 层`);
+      }
+      break;
+    case 'assaultEnergyChance':
+      // 突击兵：打出攻击卡时 15% 概率获得 1 点电量
+      if (card.type === 'damage' && Math.random() < 0.15) {
+        GameState.player.battery = Math.min(GameState.player.maxBattery, GameState.player.battery + 1);
+        addLog('被动', `突击兵：获得 1 点电量`);
+        spawnFloatingText(scene, 'player', `+1 电量`, '#33ccff', 20, '12px');
+      }
+      break;
   }
 }
