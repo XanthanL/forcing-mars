@@ -24,9 +24,9 @@ function computeLayout() {
       playerX: 320, playerY: 620,
       enemyX: 320, enemyY: 200,
       hpBarY: 80, hpBarW: 200,
-      batteryY: 760, potionY: 800,
+      batteryY: 720, potionY: 758,
       intentIconY: 320, intentTextY: 348,
-      turnPhaseY: 530, drawPileY: 880, discardPileY: 880,
+      turnPhaseY: 530, drawPileY: 800, discardPileY: 800,
       enemyHpBarY: 290,
     };
   } else {
@@ -1551,15 +1551,31 @@ function renderHand(scene) {
 
   if (GameState.hand.length === 0) return;
 
-  const gap = 10;
-  const totalW = GameState.hand.length * CARD_W + (GameState.hand.length - 1) * gap;
-  const startX = (LAYOUT.W - totalW) / 2 + CARD_W / 2;
-  const y = isPortrait ? LAYOUT.H - 90 : 510;
+  // 动态计算卡牌尺寸：竖屏时更小，手牌多时自动缩小避免溢出
+  const maxW = LAYOUT.W - 40;
+  const baseCardW = isPortrait ? 100 : CARD_W;
+  const baseCardH = isPortrait ? 60 : CARD_H;
+  const gap = isPortrait ? 6 : 10;
+
+  let cardW = baseCardW;
+  let cardH = baseCardH;
+  let totalW = GameState.hand.length * cardW + (GameState.hand.length - 1) * gap;
+
+  // 如果溢出，按比例缩小
+  if (totalW > maxW) {
+    const scale = maxW / totalW;
+    cardW = Math.floor(cardW * scale);
+    cardH = Math.floor(cardH * scale);
+    totalW = GameState.hand.length * cardW + (GameState.hand.length - 1) * gap;
+  }
+
+  const startX = (LAYOUT.W - totalW) / 2 + cardW / 2;
+  const y = isPortrait ? LAYOUT.H - 110 : 510;
 
   for (let i = 0; i < GameState.hand.length; i++) {
     const card = GameState.hand[i];
-    const x = startX + i * (CARD_W + gap);
-    const container = createCardGraphics(scene, x, y, CARD_W, CARD_H, card, i);
+    const x = startX + i * (cardW + gap);
+    const container = createCardGraphics(scene, x, y, cardW, cardH, card, i);
     GameState.cardContainers.push(container);
   }
 }
@@ -1734,7 +1750,7 @@ function createCardGraphics(scene, x, y, w, h, card, index) {
  * 结束回合按钮
  * ============================================================ */
 function createEndTurnButton(scene) {
-  const container = scene.add.container(LAYOUT.W / 2, isPortrait ? LAYOUT.H - 40 : 600);
+  const container = scene.add.container(LAYOUT.W / 2, isPortrait ? LAYOUT.H - 35 : 600);
 
   const btnW = 160;
   const btnH = 42;
@@ -2950,7 +2966,15 @@ function showCardRemovePopup(scene, onSelect) {
   overlay.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
 
   const popupW = Math.min(760, LAYOUT.W - 40);
-  const popupH = Math.min(480, LAYOUT.H - 40);
+  // 竖屏时根据卡牌数量动态计算高度，避免垂直溢出
+  const cardW = isPortrait ? 120 : 130;
+  const cardH = isPortrait ? 130 : 150;
+  const gap = isPortrait ? 8 : 10;
+  const perRow = isPortrait ? 4 : 5;
+  const rows = Math.ceil(cards.length / perRow);
+  const popupH = isPortrait
+    ? Math.min(LAYOUT.H - 40, 110 + rows * (cardH + gap) + 60)
+    : Math.min(480, LAYOUT.H - 40);
   const popupX = (LAYOUT.W - popupW) / 2;
   const popupY = (LAYOUT.H - popupH) / 2;
 
@@ -2961,7 +2985,7 @@ function showCardRemovePopup(scene, onSelect) {
   popup.strokeRoundedRect(popupX, popupY, popupW, popupH, 18);
 
   const title = scene.add.text(LAYOUT.W / 2, popupY + 45, '✕ 选择要移除的卡牌 ✕', {
-    fontSize: '22px',
+    fontSize: isPortrait ? '20px' : '22px',
     fontFamily: '"Courier New", monospace',
     color: '#ff66aa',
     fontStyle: 'bold',
@@ -2975,10 +2999,6 @@ function showCardRemovePopup(scene, onSelect) {
     color: '#ddaabb',
   }).setOrigin(0.5);
 
-  const cardW = isPortrait ? 120 : 130;
-  const cardH = 150;
-  const gap = 10;
-  const perRow = isPortrait ? 4 : 5;
   const startY = popupY + 110 + cardH / 2;
   const startX = popupX + 20 + cardW / 2;
 
@@ -3315,8 +3335,18 @@ function triggerRandomEvent(scene, onComplete) {
   overlay.fillStyle(0x000000, 0.9);
   overlay.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
 
-  const popupW = 600;
-  const popupH = 360;
+  // 自适应弹窗尺寸：竖屏时宽度自适应，按钮垂直堆叠
+  const optCount = event.options.length;
+  const popupW = Math.min(600, LAYOUT.W - 40);
+  // 竖屏：按钮垂直堆叠，高度随选项数动态变化；横屏：按钮水平排列
+  const btnW = isPortrait ? (popupW - 60) : Math.min(280, (popupW - 40 - (optCount - 1) * 16) / optCount);
+  const btnH = 46;
+  const btnGap = 12;
+  const btnsBlockH = optCount * btnH + (optCount - 1) * btnGap;
+  // 描述区域预留 140px，按钮区块下方留 24px 边距
+  const popupH = isPortrait
+    ? Math.min(LAYOUT.H - 40, 120 + 140 + btnsBlockH + 24)
+    : 360;
   const popupX = (LAYOUT.W - popupW) / 2;
   const popupY = (LAYOUT.H - popupH) / 2;
 
@@ -3327,7 +3357,7 @@ function triggerRandomEvent(scene, onComplete) {
   popup.strokeRoundedRect(popupX, popupY, popupW, popupH, 18);
 
   const title = scene.add.text(LAYOUT.W / 2, popupY + 45, `? ${event.name} ?`, {
-    fontSize: '26px',
+    fontSize: isPortrait ? '22px' : '26px',
     fontFamily: '"Courier New", monospace',
     color: '#ddaa22',
     fontStyle: 'bold',
@@ -3336,7 +3366,7 @@ function triggerRandomEvent(scene, onComplete) {
   }).setOrigin(0.5);
 
   const desc = scene.add.text(LAYOUT.W / 2, popupY + 100, event.desc, {
-    fontSize: '15px',
+    fontSize: isPortrait ? '14px' : '15px',
     fontFamily: '"Courier New", monospace',
     color: '#eeddcc',
     align: 'center',
@@ -3344,21 +3374,26 @@ function triggerRandomEvent(scene, onComplete) {
     lineSpacing: 6,
   }).setOrigin(0.5);
 
-  // 选项按钮
-  const btnY = popupY + 220;
-  const btnW = 280;
-  const btnH = 42;
-  const btnGap = 16;
-  const totalBtnW = event.options.length * btnW + (event.options.length - 1) * btnGap;
-  const btnStartX = (LAYOUT.W - totalBtnW) / 2 + btnW / 2;
-
+  // 选项按钮：竖屏垂直堆叠，横屏水平排列
+  const btnBlockTop = popupY + popupH - btnsBlockH - 24;
   const btnContainers = [];
 
-  for (let i = 0; i < event.options.length; i++) {
+  for (let i = 0; i < optCount; i++) {
     const opt = event.options[i];
-    const bx = btnStartX + i * (btnW + btnGap);
+    let bx, by;
+    if (isPortrait) {
+      // 竖屏：垂直堆叠，水平居中
+      bx = LAYOUT.W / 2;
+      by = btnBlockTop + i * (btnH + btnGap) + btnH / 2;
+    } else {
+      // 横屏：水平排列
+      const totalBtnW = optCount * btnW + (optCount - 1) * btnGap;
+      const btnStartX = (LAYOUT.W - totalBtnW) / 2 + btnW / 2;
+      bx = btnStartX + i * (btnW + btnGap);
+      by = popupY + 220;
+    }
 
-    const btnContainer = scene.add.container(bx, btnY);
+    const btnContainer = scene.add.container(bx, by);
     const btnBg = scene.add.graphics();
     btnBg.fillStyle(0x2a2410, 1);
     btnBg.fillRoundedRect(-btnW / 2, -btnH / 2, btnW, btnH, 8);
@@ -3367,7 +3402,7 @@ function triggerRandomEvent(scene, onComplete) {
     btnContainer.add(btnBg);
 
     const btnText = scene.add.text(0, 0, opt.text, {
-      fontSize: '12px',
+      fontSize: '13px',
       fontFamily: '"Courier New", monospace',
       color: '#eecdcc',
       align: 'center',
@@ -3866,35 +3901,7 @@ function showPostBattleRewardChoice(scene, onComplete) {
   overlay.fillStyle(0x000000, 0.88);
   overlay.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
 
-  const popupW = Math.min(680, LAYOUT.W - 40);
-  const popupH = 320;
-  const popupX = (LAYOUT.W - popupW) / 2;
-  const popupY = (LAYOUT.H - popupH) / 2;
-
-  const popup = scene.add.graphics();
-  popup.fillStyle(0x0a1a2a, 0.97);
-  popup.fillRoundedRect(popupX, popupY, popupW, popupH, 18);
-  popup.lineStyle(3, 0x33ccff, 1);
-  popup.strokeRoundedRect(popupX, popupY, popupW, popupH, 18);
-  popup.fillStyle(0x33ccff, 0.9);
-  popup.fillRect(popupX + 30, popupY + 28, popupW - 60, 3);
-
-  const title = scene.add.text(LAYOUT.W / 2, popupY + 55, '◆ 战后奖励 ◆', {
-    fontSize: '24px',
-    fontFamily: '"Courier New", monospace',
-    color: '#66ffff',
-    fontStyle: 'bold',
-    stroke: '#000000',
-    strokeThickness: 4,
-  }).setOrigin(0.5);
-
-  const hint = scene.add.text(LAYOUT.W / 2, popupY + 90, '选择一项奖励', {
-    fontSize: '14px',
-    fontFamily: '"Courier New", monospace',
-    color: '#88ccdd',
-  }).setOrigin(0.5);
-
-  // 三个选项
+  // 三个选项（先定义，供布局计算使用）
   const options = [
     { key: 'card',    label: '获得卡牌', desc: '从 3 张卡中选 1 张加入牌组', color: 0x33ccff, icon: '▤' },
     { key: 'upgrade', label: '升级卡牌', desc: '选择牌组中 1 张卡进行升级', color: 0x88ff44, icon: '↑' },
@@ -3908,20 +3915,68 @@ function showPostBattleRewardChoice(scene, onComplete) {
     options[1].disabled = true;
   }
 
-  const btnW = Math.min(200, (popupW - 60) / 3 - 10);
-  const btnH = 140;
-  const btnGap = 16;
-  const totalBtnW = options.length * btnW + (options.length - 1) * btnGap;
-  const btnStartX = (LAYOUT.W - totalBtnW) / 2 + btnW / 2;
-  const btnY = popupY + 180;
+  // 竖屏：选项垂直堆叠（横向条形布局）；横屏：3列水平排列
+  const popupW = Math.min(680, LAYOUT.W - 40);
+  // 竖屏时选项为横向条形：高度小、宽度满；横屏时为竖向卡片：高度大、宽度小
+  const btnGap = 14;
+  let btnW, btnH, popupH;
+  if (isPortrait) {
+    btnW = popupW - 60;
+    btnH = 78;
+    popupH = Math.min(LAYOUT.H - 40, 120 + options.length * btnH + (options.length - 1) * btnGap + 30);
+  } else {
+    btnW = Math.min(200, (popupW - 60) / 3 - 10);
+    btnH = 140;
+    popupH = 320;
+  }
+  const popupX = (LAYOUT.W - popupW) / 2;
+  const popupY = (LAYOUT.H - popupH) / 2;
 
+  const popup = scene.add.graphics();
+  popup.fillStyle(0x0a1a2a, 0.97);
+  popup.fillRoundedRect(popupX, popupY, popupW, popupH, 18);
+  popup.lineStyle(3, 0x33ccff, 1);
+  popup.strokeRoundedRect(popupX, popupY, popupW, popupH, 18);
+  popup.fillStyle(0x33ccff, 0.9);
+  popup.fillRect(popupX + 30, popupY + 28, popupW - 60, 3);
+
+  const title = scene.add.text(LAYOUT.W / 2, popupY + 55, '◆ 战后奖励 ◆', {
+    fontSize: isPortrait ? '22px' : '24px',
+    fontFamily: '"Courier New", monospace',
+    color: '#66ffff',
+    fontStyle: 'bold',
+    stroke: '#000000',
+    strokeThickness: 4,
+  }).setOrigin(0.5);
+
+  const hint = scene.add.text(LAYOUT.W / 2, popupY + 90, '选择一项奖励', {
+    fontSize: '14px',
+    fontFamily: '"Courier New", monospace',
+    color: '#88ccdd',
+  }).setOrigin(0.5);
+
+  // 按钮起始位置
   const btnObjects = [];
+  const btnBlockTop = popupY + 120;
+  // 横屏时水平排列所需变量
+  const totalBtnW_h = options.length * btnW + (options.length - 1) * btnGap;
+  const btnStartX_h = (LAYOUT.W - totalBtnW_h) / 2 + btnW / 2;
+  const btnY_h = popupY + 180;
 
   for (let i = 0; i < options.length; i++) {
     const opt = options[i];
-    const bx = btnStartX + i * (btnW + btnGap);
+    let bx, by;
+    if (isPortrait) {
+      // 竖屏：垂直堆叠
+      bx = LAYOUT.W / 2;
+      by = btnBlockTop + i * (btnH + btnGap) + btnH / 2;
+    } else {
+      // 横屏：水平排列
+      bx = btnStartX_h + i * (btnW + btnGap);
+      by = btnY_h;
+    }
 
-    const container = scene.add.container(bx, btnY);
+    const container = scene.add.container(bx, by);
     const bg = scene.add.graphics();
     const drawBg = (highlighted) => {
       bg.clear();
@@ -3933,39 +3988,75 @@ function showPostBattleRewardChoice(scene, onComplete) {
     drawBg(false);
     container.add(bg);
 
-    // 顶部颜色条
-    const topBar = scene.add.graphics();
-    topBar.fillStyle(opt.color, opt.disabled ? 0.3 : 0.85);
-    topBar.fillRoundedRect(-btnW / 2 + 8, -btnH / 2 + 8, btnW - 16, 28, { tl: 6, tr: 6, bl: 0, br: 0 });
-    container.add(topBar);
+    if (isPortrait) {
+      // 竖屏：左侧颜色条 + 图标，右侧名称+描述（横向布局）
+      const leftBar = scene.add.graphics();
+      leftBar.fillStyle(opt.color, opt.disabled ? 0.3 : 0.85);
+      leftBar.fillRoundedRect(-btnW / 2 + 6, -btnH / 2 + 6, 8, btnH - 12, 4);
+      container.add(leftBar);
 
-    const iconText = scene.add.text(0, -btnH / 2 + 22, opt.icon, {
-      fontSize: '20px',
-      fontFamily: '"Courier New", monospace',
-      color: '#ffffff',
-      fontStyle: 'bold',
-    }).setOrigin(0.5);
-    container.add(iconText);
+      const iconText = scene.add.text(-btnW / 2 + 42, 0, opt.icon, {
+        fontSize: '28px',
+        fontFamily: '"Courier New", monospace',
+        color: opt.disabled ? '#666666' : '#ffffff',
+        fontStyle: 'bold',
+      }).setOrigin(0.5);
+      container.add(iconText);
 
-    const nameText = scene.add.text(0, -btnH / 2 + 55, opt.label, {
-      fontSize: '16px',
-      fontFamily: '"Courier New", monospace',
-      color: opt.disabled ? '#666666' : '#ffffff',
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 3,
-    }).setOrigin(0.5);
-    container.add(nameText);
+      const nameText = scene.add.text(-btnW / 2 + 80, -12, opt.label, {
+        fontSize: '17px',
+        fontFamily: '"Courier New", monospace',
+        color: opt.disabled ? '#666666' : '#ffffff',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 3,
+      }).setOrigin(0, 0.5);
+      container.add(nameText);
 
-    const descText = scene.add.text(0, 10, opt.desc, {
-      fontSize: '11px',
-      fontFamily: '"Courier New", monospace',
-      color: opt.disabled ? '#555555' : '#cceeff',
-      align: 'center',
-      wordWrap: { width: btnW - 16 },
-      lineSpacing: 4,
-    }).setOrigin(0.5);
-    container.add(descText);
+      const descText = scene.add.text(-btnW / 2 + 80, 14, opt.desc, {
+        fontSize: '12px',
+        fontFamily: '"Courier New", monospace',
+        color: opt.disabled ? '#555555' : '#cceeff',
+        align: 'left',
+        wordWrap: { width: btnW - 100 },
+        lineSpacing: 3,
+      }).setOrigin(0, 0.5);
+      container.add(descText);
+    } else {
+      // 横屏：保持原竖向卡片布局
+      const topBar = scene.add.graphics();
+      topBar.fillStyle(opt.color, opt.disabled ? 0.3 : 0.85);
+      topBar.fillRoundedRect(-btnW / 2 + 8, -btnH / 2 + 8, btnW - 16, 28, { tl: 6, tr: 6, bl: 0, br: 0 });
+      container.add(topBar);
+
+      const iconText = scene.add.text(0, -btnH / 2 + 22, opt.icon, {
+        fontSize: '20px',
+        fontFamily: '"Courier New", monospace',
+        color: '#ffffff',
+        fontStyle: 'bold',
+      }).setOrigin(0.5);
+      container.add(iconText);
+
+      const nameText = scene.add.text(0, -btnH / 2 + 55, opt.label, {
+        fontSize: '16px',
+        fontFamily: '"Courier New", monospace',
+        color: opt.disabled ? '#666666' : '#ffffff',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 3,
+      }).setOrigin(0.5);
+      container.add(nameText);
+
+      const descText = scene.add.text(0, 10, opt.desc, {
+        fontSize: '11px',
+        fontFamily: '"Courier New", monospace',
+        color: opt.disabled ? '#555555' : '#cceeff',
+        align: 'center',
+        wordWrap: { width: btnW - 16 },
+        lineSpacing: 4,
+      }).setOrigin(0.5);
+      container.add(descText);
+    }
 
     const hitZone = scene.add.rectangle(0, 0, btnW + 10, btnH + 10, 0xffffff, 0)
       .setInteractive({ useHandCursor: !opt.disabled });
@@ -4046,7 +4137,15 @@ function showCardUpgradePopup(scene, onComplete) {
   overlay.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
 
   const popupW = Math.min(760, LAYOUT.W - 40);
-  const popupH = 420;
+  // 竖屏时 cardH 减小，行数动态计算 popupH 避免垂直溢出
+  const cardW = isPortrait ? 140 : 155;
+  const cardH = isPortrait ? 150 : 180;
+  const gap = 12;
+  const perRow = isPortrait ? 3 : 4;
+  const rows = Math.ceil(upgradableCards.length / perRow);
+  const popupH = isPortrait
+    ? Math.min(LAYOUT.H - 40, 120 + rows * (cardH + gap) + 20)
+    : 420;
   const popupX = (LAYOUT.W - popupW) / 2;
   const popupY = (LAYOUT.H - popupH) / 2;
 
@@ -4073,12 +4172,7 @@ function showCardUpgradePopup(scene, onComplete) {
     color: '#aaddaa',
   }).setOrigin(0.5);
 
-  // 卡牌网格：最多展示所有可升级卡
-  const cardW = isPortrait ? 140 : 155;
-  const cardH = 180;
-  const gap = 12;
-  const perRow = isPortrait ? 3 : 4;
-  const rows = Math.ceil(upgradableCards.length / perRow);
+  // 卡牌网格坐标计算（变量已在上方定义）
   const totalW = Math.min(perRow, upgradableCards.length) * cardW + (Math.min(perRow, upgradableCards.length) - 1) * gap;
   const startX = (LAYOUT.W - totalW) / 2 + cardW / 2;
   const startY = popupY + 120 + cardH / 2;
