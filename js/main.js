@@ -136,6 +136,31 @@ const GameState = {
 
   // 小 Boss 战标记
   isMiniBossBattle: false,
+
+  // 结局追踪
+  endingStats: {
+    battlesWon: 0,
+    elitesDefeated: 0,
+    curseCardsGained: 0,
+    voidChoices: 0,
+    lightChoices: 0,
+    totalDamageDealt: 0,
+    totalDamageTaken: 0,
+    potionsUsed: 0,
+    relicsCollected: 0,
+    cardsRemoved: 0,
+    goldEarned: 0,
+    shopsUsed: 0,
+    eventsTriggered: 0,
+    floorsCleared: 0,
+  },
+  endingFlags: {
+    hasVoidRelic: false,
+    hasCurseInDeck: false,
+    killedBossWithVoid: false,
+    usedVoidEvent: false,
+    usedPurifyEvent: false,
+  },
 };
 
 /* ============================================================
@@ -1086,6 +1111,9 @@ function usePotion(scene, index) {
   const potion = GameState.potions[index];
   if (!potion) return;
 
+  // 结局统计
+  GameState.endingStats.potionsUsed++;
+
   // 药水效果翻倍遗物
   const isDouble = GameState.player.relics.some(r => r.id === RELICS.marsAncientRune.id);
   const eff = potion.effect;
@@ -1761,6 +1789,7 @@ function initLevel(levelIndex) {
 
 function advanceLevel(scene) {
   GameState.depthLevel++;
+  GameState.endingStats.floorsCleared++;
   if (GameState.depthLevel >= DEPTH_LEVELS.length) return;
   initLevel(GameState.depthLevel);
   setBackgroundForLevel(scene, GameState.depthLevel);
@@ -1870,48 +1899,55 @@ const MAP_NODE_TYPES = {
   SHOP:   { key: 'shop',   name: '商店', color: 0xddaa44, icon: '$', desc: '花费金币购买卡牌/遗物/药水或移除卡牌' },
 };
 
-/** 生成杀戮尖塔式整层地图（一次性生成完整路径图） */
+/** 生成杀戮尖塔式整层地图（保证连通性，无死胡同） */
 function generateFullMap() {
   const ROWS = 7;          // 总行数（最后一行是Boss）
   const COLS = 4;          // 列数（每行最多4个节点位置）
-  const NODE_TYPES = Object.values(MAP_NODE_TYPES);
 
-  // 初始化网格：map[row][col] = node 或 null
+  // 初始化网格：grid[row][col] = node 或 null
   const grid = [];
   for (let r = 0; r < ROWS; r++) {
     grid.push([null, null, null, null]);
   }
 
-  // 生成每行的节点（最后一行固定Boss）
+  /* ---------- Step 1: 生成每行的节点位置 ---------- */
   for (let r = 0; r < ROWS - 1; r++) {
-    // 每行 2-3 个节点
-    const nodeCount = r === 0 ? 3 : (Math.random() < 0.5 ? 2 : 3);
-    // 随机选择列位置
-    const colPositions = [];
-    while (colPositions.length < nodeCount) {
-      const col = Math.floor(Math.random() * COLS);
-      if (!colPositions.includes(col)) colPositions.push(col);
+    // 每行固定 3 个节点，确保路径丰富
+    const nodeCount = 3;
+    // 随机选 3 个不同的列
+    const allCols = [0, 1, 2, 3];
+    // 打乱并取前3个
+    for (let i = allCols.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [allCols[i], allCols[j]] = [allCols[j], allCols[i]];
     }
-    colPositions.sort((a, b) => a - b);
+    const colPositions = allCols.slice(0, nodeCount).sort((a, b) => a - b);
 
     for (const col of colPositions) {
-      // 第一行第一列固定为战斗（教程性质）
+      // 分配节点类型
       let nodeType;
-      if (r === 0 && col === colPositions[0]) {
-        nodeType = { ...MAP_NODE_TYPES.BATTLE };
-      } else if (r === 0) {
-        // 第一行偏向战斗和休息
-        nodeType = Math.random() < 0.6 ? { ...MAP_NODE_TYPES.BATTLE } : { ...MAP_NODE_TYPES.REST };
+      if (r === 0) {
+        // 第一行：战斗为主，偶尔休息
+        nodeType = Math.random() < 0.7 ? { ...MAP_NODE_TYPES.BATTLE } : { ...MAP_NODE_TYPES.EVENT };
+      } else if (r === ROWS - 2) {
+        // Boss 前一行：休息/事件为主，做最后准备
+        const weighted = [
+          ...Array(2).fill(MAP_NODE_TYPES.BATTLE),
+          ...Array(2).fill(MAP_NODE_TYPES.REST),
+          ...Array(2).fill(MAP_NODE_TYPES.EVENT),
+          ...Array(1).fill(MAP_NODE_TYPES.SHOP),
+        ];
+        nodeType = { ...weighted[Math.floor(Math.random() * weighted.length)] };
       } else {
-        // 随机选择类型，战斗权重高一些
-        const weightedTypes = [
+        // 中间行：战斗权重高
+        const weighted = [
           ...Array(4).fill(MAP_NODE_TYPES.BATTLE),
           ...Array(1).fill(MAP_NODE_TYPES.ELITE),
           ...Array(2).fill(MAP_NODE_TYPES.EVENT),
           ...Array(1).fill(MAP_NODE_TYPES.SHOP),
           ...Array(1).fill(MAP_NODE_TYPES.REST),
         ];
-        nodeType = { ...weightedTypes[Math.floor(Math.random() * weightedTypes.length)] };
+        nodeType = { ...weighted[Math.floor(Math.random() * weighted.length)] };
       }
       grid[r][col] = {
         ...nodeType,
@@ -1919,70 +1955,118 @@ function generateFullMap() {
         col,
         id: `${r}-${col}`,
         visited: false,
-        reachable: r === 0, // 第一行默认可达
-        connections: [],    // 到下一行节点的连接
+        reachable: false,
+        connections: [],
       };
     }
   }
 
-  // 最后一行：Boss（居中）
-  const bossCol = 1; // 固定在列1
-  grid[ROWS - 1][bossCol] = {
+  /* ---------- Step 2: Boss 节点（最后一行居中） ---------- */
+  const bossCol = 1;
+  const bossRow = ROWS - 1;
+  grid[bossRow][bossCol] = {
     ...MAP_NODE_TYPES.BATTLE,
     name: '小 Boss',
     icon: '☠',
     color: 0xcc2222,
     desc: `迎战 ${ENEMY_CATALOG[DEPTH_LEVELS[GameState.depthLevel].miniBoss].name}`,
-    row: ROWS - 1,
+    row: bossRow,
     col: bossCol,
-    id: `boss-${GameState.depthLevel}`,
+    id: `${bossRow}-${bossCol}`,
     visited: false,
     reachable: false,
     isBossNode: true,
     connections: [],
   };
 
-  // 建立连接：每个节点连接到下一行相邻1-2个节点
+  /* ---------- Step 3: 建立连接（保证连通性） ---------- */
   for (let r = 0; r < ROWS - 1; r++) {
+    // 收集当前行和下一行的节点
+    const currentNodes = [];
+    const nextNodes = [];
     for (let c = 0; c < COLS; c++) {
-      const node = grid[r][c];
-      if (!node) continue;
+      if (grid[r][c]) currentNodes.push(grid[r][c]);
+      if (grid[r + 1][c]) nextNodes.push(grid[r + 1][c]);
+    }
 
-      // 下一行中，连接到 col-1, col, col+1 的节点
-      const possibleNextCols = [c - 1, c, c + 1].filter(nc => nc >= 0 && nc < COLS);
-      const nextNodes = possibleNextCols.map(nc => grid[r + 1][nc]).filter(n => n);
+    // 3a: 每个当前节点连接到下一行 1-2 个相邻节点
+    for (const node of currentNodes) {
+      // 相邻列：col-1, col, col+1
+      const adjacent = [node.col - 1, node.col, node.col + 1]
+        .filter(c => c >= 0 && c < COLS && grid[r + 1][c])
+        .map(c => grid[r + 1][c]);
 
-      if (nextNodes.length === 0) continue;
+      if (adjacent.length > 0) {
+        // 随机选 1-2 个
+        const count = adjacent.length === 1 ? 1 : (Math.random() < 0.4 ? 2 : 1);
+        const shuffled = [...adjacent].sort(() => Math.random() - 0.5);
+        for (let i = 0; i < count; i++) {
+          if (!node.connections.includes(shuffled[i].id)) {
+            node.connections.push(shuffled[i].id);
+          }
+        }
+      } else {
+        // 没有相邻节点：连接到最近的下一行节点
+        const nearest = nextNodes.reduce((best, n) =>
+          Math.abs(n.col - node.col) < Math.abs(best.col - node.col) ? n : best
+        );
+        if (nearest && !node.connections.includes(nearest.id)) {
+          node.connections.push(nearest.id);
+        }
+      }
+    }
 
-      // 随机选 1-2 个连接
-      const connectionCount = Math.min(nextNodes.length, Math.random() < 0.4 ? 2 : 1);
-      const shuffled = [...nextNodes].sort(() => Math.random() - 0.5);
-      for (let i = 0; i < connectionCount; i++) {
-        node.connections.push(shuffled[i].id);
+    // 3b: 确保下一行的每个节点至少有一个入边（保证可达性）
+    for (const nextNode of nextNodes) {
+      const hasIncoming = currentNodes.some(n => n.connections.includes(nextNode.id));
+      if (!hasIncoming) {
+        // 找到最近的当前行节点，强制连接
+        const nearest = currentNodes.reduce((best, n) =>
+          Math.abs(n.col - nextNode.col) < Math.abs(best.col - nextNode.col) ? n : best
+        );
+        if (nearest && !nearest.connections.includes(nextNode.id)) {
+          nearest.connections.push(nextNode.id);
+        }
       }
     }
   }
 
-  // 反向传播可达性：从已访问节点向下传递
-  // 这里简化处理：第一行全部 reachable，之后根据连接传递
+  /* ---------- Step 4: 可达性计算 ---------- */
   function updateReachable() {
-    // 清除非第一行节点的 reachable（除非已访问）
-    for (let r = 1; r < ROWS; r++) {
+    // 清除所有节点的 reachable（保留 visited）
+    for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
         const n = grid[r][c];
         if (n && !n.visited) n.reachable = false;
       }
     }
-    // 从已访问节点的连接向下传递
-    for (let r = 0; r < ROWS - 1; r++) {
+
+    // 检查是否有已访问节点
+    let hasVisited = false;
+    for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
-        const n = grid[r][c];
-        if (n && n.visited) {
-          for (const connId of n.connections) {
-            const [nr, nc] = connId.split('-').map(Number);
-            const target = grid[nr][nc];
-            if (target && !target.visited) {
-              target.reachable = true;
+        if (grid[r][c] && grid[r][c].visited) { hasVisited = true; break; }
+      }
+      if (hasVisited) break;
+    }
+
+    if (!hasVisited) {
+      // 没有已访问节点：第一行全部可达
+      for (let c = 0; c < COLS; c++) {
+        if (grid[0][c]) grid[0][c].reachable = true;
+      }
+    } else {
+      // 从已访问节点的连接向下传递可达性
+      for (let r = 0; r < ROWS - 1; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const n = grid[r][c];
+          if (n && n.visited) {
+            for (const connId of n.connections) {
+              const [nr, nc] = connId.split('-').map(Number);
+              const target = grid[nr] && grid[nr][nc];
+              if (target && !target.visited) {
+                target.reachable = true;
+              }
             }
           }
         }
@@ -1999,11 +2083,25 @@ function showMapSelectionPopup(scene, onNodeSelected) {
 
   // 首次进入本层时生成完整地图
   if (!GameState.currentMapData) {
-    const mapData = generateFullMap();
-    GameState.currentMapData = mapData;
+    GameState.currentMapData = generateFullMap();
   }
   const { grid, ROWS, COLS, updateReachable } = GameState.currentMapData;
   updateReachable();
+
+  // 安全检查：如果没有可达节点，重新生成地图
+  let hasReachable = false;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (grid[r][c] && grid[r][c].reachable) { hasReachable = true; break; }
+    }
+    if (hasReachable) break;
+  }
+  if (!hasReachable) {
+    // 地图异常：重新生成
+    console.warn('[Map] No reachable nodes found, regenerating map...');
+    GameState.currentMapData = generateFullMap();
+    GameState.currentMapData.updateReachable();
+  }
 
   const overlay = scene.add.graphics();
   overlay.fillStyle(0x000000, 0.92);
@@ -2382,6 +2480,7 @@ function handleMiniBossDefeated(scene) {
  * ============================================================ */
 function showShopPopup(scene, onComplete) {
   GameState.turnPhase = 'shop';
+  GameState.endingStats.shopsUsed++;
 
   const overlay = scene.add.graphics();
   overlay.fillStyle(0x000000, 0.9);
@@ -3210,6 +3309,7 @@ const RANDOM_EVENTS = [
 
 function triggerRandomEvent(scene, onComplete) {
   const event = RANDOM_EVENTS[Math.floor(Math.random() * RANDOM_EVENTS.length)];
+  GameState.endingStats.eventsTriggered++;
 
   const overlay = scene.add.graphics();
   overlay.fillStyle(0x000000, 0.9);
@@ -3461,6 +3561,9 @@ function resolveNewEventEffect(scene, effect) {
       }
       // 添加诅咒卡
       GameState.drawPile.cards.push(createCurseCard());
+      GameState.endingStats.curseCardsGained++;
+      GameState.endingStats.voidChoices++;
+      GameState.endingFlags.hasCurseInDeck = true;
       addLog('事件', `古老终端：获得诅咒卡 — 虚空之咒`);
       break;
     }
@@ -3526,12 +3629,15 @@ function resolveNewEventEffect(scene, effect) {
           addLog('事件', `虚空凝视：获得卡牌 ${rewards[0].name}`);
         }
       }
+      GameState.endingStats.voidChoices++;
+      GameState.endingFlags.usedVoidEvent = true;
       spawnFloatingText(scene, 'player', `HP降至1 +3张卡`, '#ff44ff', -20, '14px');
       break;
     }
     case 'voidReject': {
       GameState.player.addStatus('strength', 5);
       addLog('事件', `虚空凝视：+5 力量`);
+      GameState.endingStats.lightChoices++;
       spawnFloatingText(scene, 'player', `+5 力量`, '#ff44ff', 20, '16px');
       break;
     }
@@ -3559,6 +3665,8 @@ function resolveNewEventEffect(scene, effect) {
       if (curseCards.length > 0) {
         const idx = GameState.drawPile.cards.findIndex(c => c.uid === curseCards[0].uid);
         if (idx >= 0) GameState.drawPile.cards.splice(idx, 1);
+        GameState.endingStats.lightChoices++;
+        GameState.endingFlags.usedPurifyEvent = true;
         addLog('事件', `地下熔炉：销毁诅咒卡 ${curseCards[0].name}`);
       } else {
         addLog('事件', `地下熔炉：没有诅咒卡可销毁`);
@@ -4619,6 +4727,16 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
 function handleEnemyDefeated(scene) {
   addLog('系统', `✦ ${GameState.enemy.name} 已被击败！`);
 
+  // 结局统计埋点
+  GameState.endingStats.battlesWon++;
+  if (GameState.enemy.isElite) GameState.endingStats.elitesDefeated++;
+  GameState.endingStats.relicsCollected = GameState.player.relics.length;
+  // 检查是否使用虚空力量击杀（手牌中有诅咒卡 或 牌组中有诅咒卡）
+  const hasCurse = GameState.drawPile.cards.some(c => c.curse);
+  if (hasCurse && GameState.isFinalBossDefeated) {
+    GameState.endingFlags.killedBossWithVoid = true;
+  }
+
   GameState.discardPile = GameState.discardPile.concat(GameState.hand);
   GameState.hand = [];
   renderHand(scene);
@@ -4774,15 +4892,19 @@ function gameOver(scene, result) {
   const overlay = scene.add.graphics();
 
   if (result === 'victory' && GameState.isFinalBossDefeated) {
-    overlay.fillStyle(0x080202, 0);
+    // 判定多结局
+    const ending = determineEnding();
+
+    overlay.fillStyle(ending.bgColor || 0x080202, 0);
     overlay.fillRect(0, 0, W2, H2);
 
-    scene.tweens.add({ targets: overlay, alpha: { from: 0, to: 0.88 }, duration: 800, ease: 'Power2' });
+    scene.tweens.add({ targets: overlay, alpha: { from: 0, to: 0.9 }, duration: 800, ease: 'Power2' });
 
-    for (let i = 0; i < 30; i++) {
+    // 粒子效果
+    for (let i = 0; i < 40; i++) {
       const px = Phaser.Math.Between(0, W2);
       const py = Phaser.Math.Between(0, H2);
-      const dot = scene.add.circle(px, py, Phaser.Math.Between(1, 3), 0xff8844, 0.3);
+      const dot = scene.add.circle(px, py, Phaser.Math.Between(1, 3), ending.particleColor, 0.3);
       scene.tweens.add({
         targets: dot,
         alpha: { from: 0, to: 0.6 },
@@ -4795,54 +4917,80 @@ function gameOver(scene, result) {
       });
     }
 
-    const missionTitle = scene.add.text(W2 / 2, H2 / 2 - 120, 'MISSION SUCCESS', {
-      fontSize: '42px',
+    // 结局标题
+    const missionTitle = scene.add.text(W2 / 2, 80, ending.title, {
+      fontSize: '38px',
       fontFamily: '"Courier New", monospace',
-      color: '#ff8844',
+      color: ending.titleColor,
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 6,
     }).setOrigin(0.5).setAlpha(0);
+    scene.tweens.add({ targets: missionTitle, alpha: 1, y: 90, duration: 700, ease: 'Back.easeOut' });
 
-    scene.tweens.add({ targets: missionTitle, alpha: 1, y: H2 / 2 - 130, duration: 700, ease: 'Back.easeOut' });
-
-    const line = scene.add.graphics().setAlpha(0);
-    scene.tweens.add({ targets: line, alpha: 1, delay: 500, duration: 400 });
-    line.lineStyle(2, 0xff8844, 0.7);
-    line.lineBetween(W2 / 2 - 140, H2 / 2 - 80, W2 / 2 + 140, H2 / 2 - 80);
-
-    const mainMsg = scene.add.text(W2 / 2, H2 / 2 - 30, '火星安全前哨站已成功建立！', {
-      fontSize: '22px',
+    // 结局名称
+    const endingName = scene.add.text(W2 / 2, 145, `◆ ${ending.name} ◆`, {
+      fontSize: '24px',
       fontFamily: '"Courier New", monospace',
-      color: '#ffdd99',
+      color: ending.endingColor,
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 4,
-      align: 'center',
     }).setOrigin(0.5).setAlpha(0);
+    scene.tweens.add({ targets: endingName, alpha: 1, duration: 600, delay: 500 });
 
-    scene.tweens.add({ targets: mainMsg, alpha: 1, y: H2 / 2 - 40, duration: 600, delay: 600, ease: 'Power2' });
+    // 分隔线
+    const line = scene.add.graphics().setAlpha(0);
+    scene.tweens.add({ targets: line, alpha: 1, delay: 800, duration: 400 });
+    line.lineStyle(2, ending.lineColor, 0.7);
+    line.lineBetween(W2 / 2 - 200, 180, W2 / 2 + 200, 180);
 
-    const subMsg = scene.add.text(W2 / 2, H2 / 2 + 20, '人类在火星地下立住了脚跟。\n在这颗锈红色的星球上，新的家园正在诞生。', {
-      fontSize: '16px',
+    // 结局描述
+    const descText = scene.add.text(W2 / 2, 220, ending.description, {
+      fontSize: '15px',
       fontFamily: '"Courier New", monospace',
-      color: '#cc8866',
+      color: ending.descColor,
       align: 'center',
+      wordWrap: { width: W2 - 80 },
       lineSpacing: 6,
       stroke: '#000000',
       strokeThickness: 2,
+    }).setOrigin(0.5, 0).setAlpha(0);
+    scene.tweens.add({ targets: descText, alpha: 1, duration: 600, delay: 1000 });
+
+    // 战绩统计面板
+    const statsY = isPortrait ? 360 : 340;
+    const statsTitle = scene.add.text(W2 / 2, statsY, '— 本局战绩 —', {
+      fontSize: '14px',
+      fontFamily: '"Courier New", monospace',
+      color: '#88aabb',
+      fontStyle: 'bold',
     }).setOrigin(0.5).setAlpha(0);
+    scene.tweens.add({ targets: statsTitle, alpha: 1, duration: 400, delay: 1300 });
 
-    scene.tweens.add({ targets: subMsg, alpha: 1, duration: 600, delay: 1000 });
+    const stats = GameState.endingStats;
+    const statsLines = [
+      `角色: ${GameState.player.name}  |  楼层: ${stats.floorsCleared}  |  战斗胜利: ${stats.battlesWon}`,
+      `精英击败: ${stats.elitesDefeated}  |  遗物收集: ${stats.relicsCollected}  |  诅咒卡: ${stats.curseCardsGained}`,
+      `事件触发: ${stats.eventsTriggered}  |  药水使用: ${stats.potionsUsed}  |  商店使用: ${stats.shopsUsed}`,
+      `虚空选择: ${stats.voidChoices}  |  光明选择: ${stats.lightChoices}  |  剩余金币: ${GameState.gold}`,
+    ];
+    const statsText = scene.add.text(W2 / 2, statsY + 25, statsLines.join('\n'), {
+      fontSize: '12px',
+      fontFamily: '"Courier New", monospace',
+      color: '#aabbcc',
+      align: 'center',
+      lineSpacing: 6,
+    }).setOrigin(0.5, 0).setAlpha(0);
+    scene.tweens.add({ targets: statsText, alpha: 1, duration: 600, delay: 1500 });
 
-    const btnContainer = scene.add.container(W2 / 2, H2 / 2 + 100).setAlpha(0);
+    // 重新开始按钮
+    const btnContainer = scene.add.container(W2 / 2, H2 - 80).setAlpha(0);
     const btnBg = scene.add.graphics();
     btnBg.fillStyle(0x5a2212, 1);
     btnBg.fillRoundedRect(-100, -22, 200, 44, 10);
     btnBg.lineStyle(2, 0xcc4420, 1);
     btnBg.strokeRoundedRect(-100, -22, 200, 44, 10);
-    btnBg.lineStyle(1, 0xff8844, 0.2);
-    btnBg.strokeRoundedRect(-98, -20, 196, 40, 9);
     btnContainer.add(btnBg);
 
     const btnText = scene.add.text(0, 0, '⟳ 重新开始', {
@@ -4863,8 +5011,6 @@ function gameOver(scene, result) {
       btnBg.fillRoundedRect(-100, -22, 200, 44, 10);
       btnBg.lineStyle(2, 0xff6633, 1);
       btnBg.strokeRoundedRect(-100, -22, 200, 44, 10);
-      btnBg.lineStyle(1, 0xffaa66, 0.3);
-      btnBg.strokeRoundedRect(-98, -20, 196, 40, 9);
       scene.tweens.add({ targets: btnContainer, scaleX: 1.05, scaleY: 1.05, duration: 100 });
     });
     btnHit.on('pointerout', () => {
@@ -4873,13 +5019,11 @@ function gameOver(scene, result) {
       btnBg.fillRoundedRect(-100, -22, 200, 44, 10);
       btnBg.lineStyle(2, 0xcc4420, 1);
       btnBg.strokeRoundedRect(-100, -22, 200, 44, 10);
-      btnBg.lineStyle(1, 0xff8844, 0.2);
-      btnBg.strokeRoundedRect(-98, -20, 196, 40, 9);
       scene.tweens.add({ targets: btnContainer, scaleX: 1, scaleY: 1, duration: 100 });
     });
     btnHit.on('pointerdown', () => scene.scene.restart());
 
-    scene.tweens.add({ targets: btnContainer, alpha: 1, duration: 600, delay: 1400, ease: 'Power2' });
+    scene.tweens.add({ targets: btnContainer, alpha: 1, duration: 600, delay: 1800, ease: 'Power2' });
 
   } else {
     overlay.fillStyle(0x000000, 0);
@@ -4928,6 +5072,86 @@ function gameOver(scene, result) {
 
   addLog('系统', result === 'victory' ? '✦ 使命完成！' : '✧ 战败...');
   refreshUI(scene);
+}
+
+/* ============================================================
+ * 多结局判定系统
+ * ============================================================ */
+const ENDINGS = {
+  purifier: {
+    id: 'purifier',
+    title: 'MISSION SUCCESS',
+    name: '净化结局 · 火星之净',
+    description: '你以纯净之力击败了火星吞噬者。\n没有使用任何虚空力量，没有诅咒污染牌组。\n\n火星的地核重归平静，远古的寄生体被彻底净化。\n人类在这颗红色星球上建立了永恒的家园，\n你的名字将被刻在第一座纪念碑上。',
+    titleColor: '#ffdd44',
+    endingColor: '#ffaa44',
+    descColor: '#ffdd99',
+    lineColor: 0xffaa44,
+    bgColor: 0x080202,
+    particleColor: 0xff8844,
+  },
+  balanced: {
+    id: 'balanced',
+    title: 'MISSION SUCCESS',
+    name: '平衡结局 · 灰色抉择',
+    description: '你击败了火星吞噬者。\n在光与暗之间，你选择了灰色的平衡之路。\n既不纯粹也不堕落，既使用力量也保持理智。\n\n火星被征服了，但代价沉重。\n前哨站建立起来，但你知道深渊仍在地底沉睡。\n未来的某一天，它可能再次苏醒。',
+    titleColor: '#88ddff',
+    endingColor: '#66aaff',
+    descColor: '#aaccdd',
+    lineColor: 0x66aaff,
+    bgColor: 0x020208,
+    particleColor: 0x66aaff,
+  },
+  void: {
+    id: 'void',
+    title: 'MISSION COMPLETE?',
+    name: '虚空结局 · 深渊凝视',
+    description: '你击败了火星吞噬者，但代价是什么？\n你的牌组中充斥着诅咒，你的灵魂已被虚空侵蚀。\n\n当寄生体倒下的那一刻，你感受到了它的低语。\n「我们合而为一了。」\n\n你站在地核之中，眼中闪烁着不属于人类的紫光。\n前哨站的信号永远消失了。',
+    titleColor: '#cc44ff',
+    endingColor: '#aa44ff',
+    descColor: '#cc88ff',
+    lineColor: 0xaa44ff,
+    bgColor: 0x040208,
+    particleColor: 0xaa44ff,
+  },
+  sacrifice: {
+    id: 'sacrifice',
+    title: 'MISSION COMPLETE',
+    name: '牺牲结局 · 永恒守护',
+    description: '你没有选择离开。\n在最后一刻，你选择与火星吞噬者同归于尽。\n\n你的生命化作了封印，永远镇压着地核中的深渊。\n\n前哨站的同伴们安全了。\n他们不知道你做了什么，\n但每当夜幕降临，火星的天空中会多出一颗微弱的星。\n那是你。',
+    titleColor: '#ff6644',
+    endingColor: '#ff4444',
+    descColor: '#ff8866',
+    lineColor: 0xff4444,
+    bgColor: 0x080202,
+    particleColor: 0xff4444,
+  },
+};
+
+/** 根据游戏过程判定结局 */
+function determineEnding() {
+  const stats = GameState.endingStats;
+  const flags = GameState.endingFlags;
+  const hasCurse = GameState.drawPile.cards.some(c => c.curse);
+
+  // 虚空结局：使用过虚空事件 + 牌组中有诅咒卡
+  if (flags.usedVoidEvent && hasCurse && stats.voidChoices >= 2) {
+    return ENDINGS.void;
+  }
+
+  // 净化结局：从未使用虚空事件 + 牌组中无诅咒卡 + 净化过诅咒或光明选择较多
+  if (!flags.usedVoidEvent && !hasCurse &&
+      (flags.usedPurifyEvent || stats.lightChoices >= 2)) {
+    return ENDINGS.purifier;
+  }
+
+  // 牺牲结局：玩家HP极低（< 20% maxHp）时击败Boss
+  if (GameState.player.hp < GameState.player.maxHp * 0.2) {
+    return ENDINGS.sacrifice;
+  }
+
+  // 平衡结局：默认结局
+  return ENDINGS.balanced;
 }
 
 /* ============================================================
