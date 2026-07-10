@@ -1,7 +1,33 @@
 /**
  * entities.js — 玩家 & 敌人模型
  * 支持：固定伤害、交替行动、递增伤害、Boss蓄力 四种模式
+ * 支持：状态效果系统（灼烧/中毒/易伤/力量/虚弱）
+ * 支持：遗物系统（8种遗物）
  */
+
+/* ============================================================
+ * 状态效果名称映射
+ * ============================================================ */
+const STATUS_EFFECT_NAMES = {
+  burn: '灼烧',
+  poison: '中毒',
+  vulnerable: '易伤',
+  strength: '力量',
+  weak: '虚弱',
+  thorns: '反伤',
+};
+
+/** 生成状态效果的描述文本（支持单个对象或数组形式） */
+function describeStatusEffect(statusEffect) {
+  if (!statusEffect) return '';
+  const effects = Array.isArray(statusEffect) ? statusEffect : [statusEffect];
+  if (effects.length === 0) return '';
+  const parts = effects.map(eff => {
+    const name = STATUS_EFFECT_NAMES[eff.type] || eff.type;
+    return `${eff.stacks}层${name}`;
+  });
+  return `（附加${parts.join(' + ')}）`;
+}
 
 /* ============================================================
  * 基类 Entity
@@ -12,15 +38,97 @@ class Entity {
     this.maxHp = maxHp;
     this.hp = maxHp;
     this.shield = 0;
+    // 状态效果：burn(灼烧) / poison(中毒) / vulnerable(易伤) / strength(力量) / weak(虚弱) / thorns(反伤)
+    this.statusEffects = {
+      burn: 0,
+      poison: 0,
+      vulnerable: 0,
+      strength: 0,
+      weak: 0,
+      thorns: 0,
+    };
   }
 
-  /** 承受伤害：护盾优先吸收，溢出部分扣减生命值 */
+  /** 添加状态效果层数 */
+  addStatus(type, stacks) {
+    if (!(type in this.statusEffects)) {
+      this.statusEffects[type] = 0;
+    }
+    this.statusEffects[type] += stacks;
+  }
+
+  /** 获取指定状态效果的当前层数 */
+  getStatus(type) {
+    return this.statusEffects[type] || 0;
+  }
+
+  /** 清除所有状态效果 */
+  clearAllStatus() {
+    this.statusEffects = {
+      burn: 0,
+      poison: 0,
+      vulnerable: 0,
+      strength: 0,
+      weak: 0,
+      thorns: 0,
+    };
+  }
+
+  /**
+   * 回合结算状态效果
+   * - 灼烧：扣血并 -1 层
+   * - 中毒：扣血不衰减
+   * - 易伤：-1 层
+   * - 虚弱：-1 层
+   * - 力量：永久，不衰减
+   * - 反伤：永久，不衰减
+   */
+  tickStatusEffects() {
+    const effects = this.statusEffects;
+    // 状态伤害减免（如量子稳定器遗物，仅 Player 有效）
+    const reduction = (typeof this.getRelicBonus === 'function')
+      ? this.getRelicBonus('statusReduction')
+      : 0;
+
+    // 灼烧：扣血并 -1 层
+    if (effects.burn > 0) {
+      const burnDamage = Math.floor(effects.burn * (1 - reduction));
+      this.hp = Math.max(0, this.hp - burnDamage);
+      effects.burn = Math.max(0, effects.burn - 1);
+    }
+    // 中毒：扣血不衰减
+    if (effects.poison > 0) {
+      const poisonDamage = Math.floor(effects.poison * (1 - reduction));
+      this.hp = Math.max(0, this.hp - poisonDamage);
+    }
+    // 易伤：-1 层
+    if (effects.vulnerable > 0) {
+      effects.vulnerable = Math.max(0, effects.vulnerable - 1);
+    }
+    // 虚弱：-1 层
+    if (effects.weak > 0) {
+      effects.weak = Math.max(0, effects.weak - 1);
+    }
+    // 力量：永久，不衰减
+    // 反伤：永久，不衰减
+  }
+
+  /**
+   * 承受伤害：护盾优先吸收，溢出部分扣减生命值
+   * 易伤状态：受到伤害 ×1.5
+   * 注意：力量层数应在攻击计算时加入，不由 takeDamage 处理
+   */
   takeDamage(amount) {
-    const absorbed = Math.min(this.shield, amount);
+    let finalDamage = amount;
+    // 易伤状态：受到伤害 ×1.5
+    if (this.getStatus('vulnerable') > 0) {
+      finalDamage = Math.floor(finalDamage * 1.5);
+    }
+    const absorbed = Math.min(this.shield, finalDamage);
     this.shield -= absorbed;
-    const remaining = amount - absorbed;
+    const remaining = finalDamage - absorbed;
     this.hp = Math.max(0, this.hp - remaining);
-    return { absorbed, damageToHp: remaining, total: amount };
+    return { absorbed, damageToHp: remaining, total: finalDamage };
   }
 
   addShield(amount) {
@@ -55,6 +163,54 @@ const RELICS = {
     type: 'epic',
     color: 0x33ccff,
     effect: { maxBatteryBonus: 1 },
+  },
+  hematiteAmulet: {
+    id: 'hematiteAmulet',
+    name: '赤铁护符',
+    desc: '每回合开始获得 3 点护盾',
+    type: 'basic',
+    color: 0xaa3322,
+    effect: { turnShield: 3 },
+  },
+  quantumStabilizer: {
+    id: 'quantumStabilizer',
+    name: '量子稳定器',
+    desc: '灼烧/中毒伤害减半',
+    type: 'rare',
+    color: 0x9966ff,
+    effect: { statusReduction: 0.5 },
+  },
+  deepSpaceMonocle: {
+    id: 'deepSpaceMonocle',
+    name: '深空目镜',
+    desc: '每回合多抽 1 张牌',
+    type: 'rare',
+    color: 0x66ccff,
+    effect: { extraDraw: 1 },
+  },
+  nanoRepairSwarm: {
+    id: 'nanoRepairSwarm',
+    name: '纳米修复蜂群',
+    desc: '每回合恢复 2 点生命值',
+    type: 'rare',
+    color: 0x33ff99,
+    effect: { turnHeal: 2 },
+  },
+  antimatterCore: {
+    id: 'antimatterCore',
+    name: '反物质核心',
+    desc: '力量效果翻倍',
+    type: 'epic',
+    color: 0xff33ff,
+    effect: { strengthDouble: true },
+  },
+  marsAncientRune: {
+    id: 'marsAncientRune',
+    name: '火星古老符文',
+    desc: '药水效果翻倍',
+    type: 'epic',
+    color: 0xffaa33,
+    effect: { potionDouble: true },
   },
 };
 
@@ -95,6 +251,18 @@ class Player extends Entity {
     }
   }
 
+  /**
+   * 获取力量效果倍率
+   * 反物质核心遗物：力量效果翻倍
+   */
+  getStrengthMultiplier() {
+    return this.relics.some(r => r.effect.strengthDouble) ? 2 : 1;
+  }
+
+  /**
+   * 重置电量（每回合开始调用）
+   * 注意：虚弱等临时状态由 tickStatusEffects 管理，不在此清除
+   */
   resetBattery() {
     this.battery = this.maxBattery;
     this.damageTakenBonus = 0;
@@ -164,7 +332,7 @@ const ENEMY_CATALOG = {
     maxHp: 46,
     pattern: ENEMY_PATTERN.ALTERNATING,
     actions: [
-      { type: 'damage', value: 11 },
+      { type: 'damage', value: 11, statusEffect: { type: 'vulnerable', stacks: 1 } },
       { type: 'shield', value: 8 },
     ],
   },
@@ -176,6 +344,7 @@ const ENEMY_CATALOG = {
     pattern: ENEMY_PATTERN.RAMPING,
     baseDamage: 5,
     damageIncrement: 3,
+    statusEffect: { type: 'poison', stacks: 1 },
   },
   deepLurker: {
     key: 'deepLurker',
@@ -185,8 +354,99 @@ const ENEMY_CATALOG = {
     pattern: ENEMY_PATTERN.ALTERNATING,
     actions: [
       { type: 'shield', value: 15 },
-      { type: 'damage', value: 14 },
+      { type: 'damage', value: 14, statusEffect: { type: 'burn', stacks: 2 } },
     ],
+  },
+  lavaSpider: {
+    key: 'lavaSpider',
+    name: '熔岩蜘蛛',
+    sprite: 'enemy_lava_spider',
+    maxHp: 32,
+    pattern: ENEMY_PATTERN.ALTERNATING,
+    actions: [
+      { type: 'damage', value: 3, statusEffect: { type: 'burn', stacks: 1 } },
+      { type: 'damage', value: 3, statusEffect: { type: 'burn', stacks: 1 } },
+    ],
+  },
+  gravityWarp: {
+    key: 'gravityWarp',
+    name: '引力扭曲者',
+    sprite: 'enemy_gravity_warp',
+    maxHp: 38,
+    pattern: ENEMY_PATTERN.ALTERNATING,
+    actions: [
+      { type: 'damage', value: 8, statusEffect: { type: 'weak', stacks: 1 } },
+      { type: 'shield', value: 6 },
+    ],
+  },
+  /* ---------- 新增普通敌人 ---------- */
+  magmaGolem: {
+    key: 'magmaGolem',
+    name: '岩浆魔像',
+    sprite: 'enemy_magma_golem',
+    maxHp: 50,
+    pattern: ENEMY_PATTERN.ALTERNATING,
+    actions: [
+      { type: 'shield', value: 10 },
+      { type: 'damage', value: 12, statusEffect: { type: 'burn', stacks: 2 } },
+    ],
+  },
+  voidLeech: {
+    key: 'voidLeech',
+    name: '虚空蛭',
+    sprite: 'enemy_void_leech',
+    maxHp: 36,
+    pattern: ENEMY_PATTERN.RAMPING,
+    baseDamage: 4,
+    damageIncrement: 2,
+    statusEffect: { type: 'weak', stacks: 1 },
+  },
+  quantumSpecter: {
+    key: 'quantumSpecter',
+    name: '量子幽灵',
+    sprite: 'enemy_quantum_specter',
+    maxHp: 42,
+    pattern: ENEMY_PATTERN.ALTERNATING,
+    actions: [
+      { type: 'damage', value: 7, statusEffect: { type: 'vulnerable', stacks: 2 } },
+      { type: 'shield', value: 5 },
+    ],
+  },
+  /* ---------- 新增精英敌人（高难度高奖励） ---------- */
+  ancientGuardian: {
+    key: 'ancientGuardian',
+    name: '远古守护者',
+    sprite: 'enemy_ancient_guardian',
+    maxHp: 68,
+    pattern: ENEMY_PATTERN.ALTERNATING,
+    actions: [
+      { type: 'shield', value: 18 },
+      { type: 'damage', value: 16, statusEffect: { type: 'vulnerable', stacks: 2 } },
+    ],
+    isElite: true,
+  },
+  plasmaHydra: {
+    key: 'plasmaHydra',
+    name: '等离子九头蛇',
+    sprite: 'enemy_plasma_hydra',
+    maxHp: 62,
+    pattern: ENEMY_PATTERN.RAMPING,
+    baseDamage: 6,
+    damageIncrement: 4,
+    statusEffect: { type: 'burn', stacks: 2 },
+    isElite: true,
+  },
+  voidReaper: {
+    key: 'voidReaper',
+    name: '虚空收割者',
+    sprite: 'enemy_void_reaper',
+    maxHp: 58,
+    pattern: ENEMY_PATTERN.ALTERNATING,
+    actions: [
+      { type: 'damage', value: 13, statusEffect: { type: 'weak', stacks: 2 } },
+      { type: 'damage', value: 13, statusEffect: { type: 'vulnerable', stacks: 2 } },
+    ],
+    isElite: true,
   },
   marsDevourer: {
     key: 'marsDevourer',
@@ -196,6 +456,10 @@ const ENEMY_CATALOG = {
     pattern: ENEMY_PATTERN.BOSS_CHARGE,
     chargeTurns: 2,
     chargeDamage: 26,
+    statusEffect: [
+      { type: 'vulnerable', stacks: 3 },
+      { type: 'burn', stacks: 2 },
+    ],
   },
 };
 
@@ -209,11 +473,12 @@ class Enemy extends Entity {
    *   maxHp         - 最大生命值
    *   pattern       - ENEMY_PATTERN 之一
    *   fixedDamage   - FIXED 模式下固定伤害值
-   *   actions       - ALTERNATING 模式下两个行动 [{type, value}, ...]
+   *   actions       - ALTERNATING 模式下行动列表 [{type, value, statusEffect?}, ...]
    *   baseDamage    - RAMPING 模式下起始伤害
    *   damageIncrement - RAMPING 模式下每回合递增
    *   chargeTurns   - BOSS_CHARGE 模式下蓄力回合数
    *   chargeDamage  - BOSS_CHARGE 模式下蓄满后伤害
+   *   statusEffect  - RAMPING/BOSS_CHARGE 模式下攻击附带的状态效果
    */
   constructor(config) {
     super(config.name, config.maxHp);
@@ -236,6 +501,9 @@ class Enemy extends Entity {
     this.chargeTurns = config.chargeTurns || 0;
     this.chargeDamage = config.chargeDamage || 0;
     this.currentCharge = 0;
+
+    // 攻击附带的状态效果（RAMPING / BOSS_CHARGE 模式）
+    this.attackStatusEffect = config.statusEffect || null;
   }
 
   /** 从图鉴 key 快速创建敌人实例 */
@@ -256,14 +524,16 @@ class Enemy extends Entity {
       case ENEMY_PATTERN.ALTERNATING: {
         const idx = this.turnCount % this.actions.length;
         const action = this.actions[idx];
-        if (action.type === 'damage') return `攻击！造成 ${action.value} 点伤害`;
+        const statusDesc = action.statusEffect ? describeStatusEffect(action.statusEffect) : '';
+        if (action.type === 'damage') return `攻击！造成 ${action.value} 点伤害${statusDesc}`;
         if (action.type === 'shield') return `防御！获得 ${action.value} 点护盾`;
         return '未知行动';
       }
 
       case ENEMY_PATTERN.RAMPING: {
         const dmg = this.baseDamage + this.turnCount * this.damageIncrement;
-        return `造成 ${dmg} 点伤害（递增）`;
+        const statusDesc = this.attackStatusEffect ? describeStatusEffect(this.attackStatusEffect) : '';
+        return `造成 ${dmg} 点伤害（递增）${statusDesc}`;
       }
 
       case ENEMY_PATTERN.BOSS_CHARGE: {
@@ -271,7 +541,8 @@ class Enemy extends Entity {
         if (remaining > 0) {
           return `蓄力中... (${remaining}/${this.chargeTurns})`;
         }
-        return `◆ 致命一击！${this.chargeDamage} 点伤害 ◆`;
+        const statusDesc = this.attackStatusEffect ? describeStatusEffect(this.attackStatusEffect) : '';
+        return `◆ 致命一击！${this.chargeDamage} 点伤害 ◆${statusDesc}`;
       }
 
       default:
@@ -304,19 +575,45 @@ class Enemy extends Entity {
     this.turnCount++;
     const result = new EnemyActionResult();
 
-    const dealDamage = (baseDamage) => {
+    /**
+     * 对玩家造成伤害
+     * @param {number} baseDamage - 基础伤害
+     * @param {object|array|null} statusEffect - 攻击附带的状态效果
+     * @returns {number} 实际造成的总伤害
+     */
+    const dealDamage = (baseDamage, statusEffect = null) => {
       const bonus = player.damageTakenBonus || 0;
-      const totalDamage = baseDamage + bonus;
+      // 力量层数加成（攻击方）
+      const strengthStacks = this.getStatus('strength');
+      let totalDamage = baseDamage + bonus + strengthStacks;
+      // 虚弱：攻击伤害 -25%
+      if (this.getStatus('weak') > 0) {
+        totalDamage = Math.floor(totalDamage * 0.75);
+      }
       player.takeDamage(totalDamage);
-      return totalDamage;
+      // 反伤：玩家受到攻击时，敌人受到反伤层数的伤害
+      const playerThorns = player.getStatus('thorns');
+      if (playerThorns > 0) {
+        this.hp = Math.max(0, this.hp - playerThorns);
+      }
+      // 施加状态效果
+      if (statusEffect) {
+        const effects = Array.isArray(statusEffect) ? statusEffect : [statusEffect];
+        for (const eff of effects) {
+          player.addStatus(eff.type, eff.stacks);
+        }
+      }
+      return { damage: totalDamage, thornsDamage: playerThorns };
     };
 
     switch (this.pattern) {
       case ENEMY_PATTERN.FIXED: {
-        const total = dealDamage(this.fixedDamage);
+        const dmgResult = dealDamage(this.fixedDamage);
         result.type = 'damage';
-        result.value = total;
-        result.desc = `${this.name} 造成 ${total} 点伤害`;
+        result.value = dmgResult.damage;
+        result.thornsDamage = dmgResult.thornsDamage;
+        result.desc = `${this.name} 造成 ${dmgResult.damage} 点伤害` +
+          (dmgResult.thornsDamage > 0 ? `（反伤 ${dmgResult.thornsDamage}）` : '');
         break;
       }
 
@@ -324,10 +621,13 @@ class Enemy extends Entity {
         const idx = (this.turnCount - 1) % this.actions.length;
         const action = this.actions[idx];
         if (action.type === 'damage') {
-          const total = dealDamage(action.value);
+          const dmgResult = dealDamage(action.value, action.statusEffect || null);
           result.type = 'damage';
-          result.value = total;
-          result.desc = `${this.name} 造成 ${total} 点伤害`;
+          result.value = dmgResult.damage;
+          result.thornsDamage = dmgResult.thornsDamage;
+          const statusDesc = action.statusEffect ? describeStatusEffect(action.statusEffect) : '';
+          result.desc = `${this.name} 造成 ${dmgResult.damage} 点伤害${statusDesc}` +
+            (dmgResult.thornsDamage > 0 ? `（反伤 ${dmgResult.thornsDamage}）` : '');
         } else if (action.type === 'shield') {
           result.type = 'shield';
           result.value = action.value;
@@ -339,10 +639,13 @@ class Enemy extends Entity {
 
       case ENEMY_PATTERN.RAMPING: {
         const baseDmg = this.baseDamage + (this.turnCount - 1) * this.damageIncrement;
-        const total = dealDamage(baseDmg);
+        const dmgResult = dealDamage(baseDmg, this.attackStatusEffect);
         result.type = 'damage';
-        result.value = total;
-        result.desc = `${this.name} 造成 ${total} 点伤害`;
+        result.value = dmgResult.damage;
+        result.thornsDamage = dmgResult.thornsDamage;
+        const statusDesc = this.attackStatusEffect ? describeStatusEffect(this.attackStatusEffect) : '';
+        result.desc = `${this.name} 造成 ${dmgResult.damage} 点伤害${statusDesc}` +
+          (dmgResult.thornsDamage > 0 ? `（反伤 ${dmgResult.thornsDamage}）` : '');
         break;
       }
 
@@ -354,10 +657,13 @@ class Enemy extends Entity {
           result.value = 0;
           result.desc = `${this.name} 正在蓄力... (${this.currentCharge}/${this.chargeTurns})`;
         } else {
-          const total = dealDamage(this.chargeDamage);
+          const dmgResult = dealDamage(this.chargeDamage, this.attackStatusEffect);
           result.type = 'chargedAttack';
-          result.value = total;
-          result.desc = `★ ${this.name} 释放致命一击！造成 ${total} 点伤害 ★`;
+          result.value = dmgResult.damage;
+          result.thornsDamage = dmgResult.thornsDamage;
+          const statusDesc = this.attackStatusEffect ? describeStatusEffect(this.attackStatusEffect) : '';
+          result.desc = `★ ${this.name} 释放致命一击！造成 ${dmgResult.damage} 点伤害 ★${statusDesc}` +
+            (dmgResult.thornsDamage > 0 ? `（反伤 ${dmgResult.thornsDamage}）` : '');
           // 重置蓄力，开始新一轮
           this.currentCharge = 0;
         }
@@ -409,10 +715,21 @@ const DEPTH_LEVELS = [
  * pick: 0 表示顺序出现，1 表示从中随机选取一个
  * ============================================================ */
 const LEVEL_ENEMY_CONFIG = [
-  { catalogKeys: ['marsLeech', 'duneStalker'], pick: 1 },
-  { catalogKeys: ['redCrawler', 'crystalParasite'], pick: 1 },
-  { catalogKeys: ['deepLurker'], pick: 0 },
+  { catalogKeys: ['marsLeech', 'duneStalker', 'lavaSpider'], pick: 1 },
+  { catalogKeys: ['redCrawler', 'crystalParasite', 'gravityWarp', 'voidLeech', 'quantumSpecter', 'magmaGolem'], pick: 1 },
+  { catalogKeys: ['deepLurker', 'magmaGolem', 'quantumSpecter'], pick: 1 },
 ];
+
+/* ============================================================
+ * 精英敌人池（用于精英战斗节点）
+ * ============================================================ */
+const ELITE_ENEMY_KEYS = ['ancientGuardian', 'plasmaHydra', 'voidReaper'];
+
+/** 随机生成一个精英敌人 */
+function buildEliteEnemy() {
+  const key = ELITE_ENEMY_KEYS[Math.floor(Math.random() * ELITE_ENEMY_KEYS.length)];
+  return Enemy.fromCatalog(key);
+}
 
 /* ============================================================
  * 敌人池配置（按关卡索引）
