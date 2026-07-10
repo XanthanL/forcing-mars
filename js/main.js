@@ -9,10 +9,47 @@
 const W = 960;
 const H = 640;
 
+// 布局配置：横屏 vs 竖屏
+let isPortrait = false;
+let LAYOUT = {};
+
+function computeLayout() {
+  // 根据窗口宽高比判断横竖屏
+  isPortrait = window.innerHeight > window.innerWidth;
+
+  if (isPortrait) {
+    // 竖屏：640×960，敌人在上，玩家在下
+    LAYOUT = {
+      W: 640, H: 960,
+      playerX: 320, playerY: 620,
+      enemyX: 320, enemyY: 200,
+      hpBarY: 80, hpBarW: 200,
+      batteryY: 760, potionY: 800,
+      intentIconY: 320, intentTextY: 348,
+      turnPhaseY: 530, drawPileY: 880, discardPileY: 880,
+      enemyHpBarY: 290,
+    };
+  } else {
+    // 横屏：960×640，玩家在左，敌人在右
+    LAYOUT = {
+      W: 960, H: 640,
+      playerX: 200, playerY: 280,
+      enemyX: 820, enemyY: 280,
+      hpBarY: 150, hpBarW: 170,
+      batteryY: 440, potionY: 488,
+      intentIconY: 58, intentTextY: 86,
+      turnPhaseY: 390, drawPileY: 460, discardPileY: 460,
+      enemyHpBarY: 150,
+    };
+  }
+}
+
+computeLayout();
+
 const game = new Phaser.Game({
   type: Phaser.AUTO,
-  width: W,
-  height: H,
+  width: LAYOUT.W,
+  height: LAYOUT.H,
   parent: 'game-container',
   backgroundColor: '#1a0808',
   scene: [StoryScene, {
@@ -22,9 +59,8 @@ const game = new Phaser.Game({
     update,
   }],
   scale: {
-    mode: Phaser.Scale.FIT,
+    mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
-    max: { width: 960, height: 640 },
   },
 });
 
@@ -93,6 +129,13 @@ const GameState = {
   visitedNodes: [],       // 已访问的节点（用于地图历史）
   nodeBattleCount: 0,     // 当前层已进行的战斗次数
   battlesPerLayer: 2,     // 每层需要战斗的次数后进入下一层
+  currentMapData: null,   // 杀戮尖塔式完整地图数据
+
+  // 金币系统
+  gold: 0,                // 当前持有金币
+
+  // 小 Boss 战标记
+  isMiniBossBattle: false,
 };
 
 /* ============================================================
@@ -139,10 +182,163 @@ let enemyStatusIcons = []; // 敌人状态效果图标
 // 结束回合按钮
 let endTurnBtn;
 
+// 金币显示
+let goldText;
+
 /* ============================================================
  * 场景钩子 create
  * ============================================================ */
 function create() {
+  /* ---------- 检查存档 ---------- */
+  if (hasSave()) {
+    showSaveLoadPrompt(this);
+    return;
+  }
+
+  startNewGame(this);
+}
+
+/** 显示存档加载提示 */
+function showSaveLoadPrompt(scene) {
+  const overlay = scene.add.graphics();
+  overlay.fillStyle(0x000000, 0.9);
+  overlay.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
+
+  const popupW = Math.min(500, LAYOUT.W - 40);
+  const popupH = 280;
+  const popupX = (LAYOUT.W - popupW) / 2;
+  const popupY = (LAYOUT.H - popupH) / 2;
+
+  const popup = scene.add.graphics();
+  popup.fillStyle(0x0a1a2a, 0.98);
+  popup.fillRoundedRect(popupX, popupY, popupW, popupH, 18);
+  popup.lineStyle(3, 0x33ccff, 1);
+  popup.strokeRoundedRect(popupX, popupY, popupW, popupH, 18);
+
+  const title = scene.add.text(LAYOUT.W / 2, popupY + 55, '◆ 检测到存档 ◆', {
+    fontSize: '24px',
+    fontFamily: '"Courier New", monospace',
+    color: '#66ffff',
+    fontStyle: 'bold',
+    stroke: '#000000',
+    strokeThickness: 4,
+  }).setOrigin(0.5);
+
+  const hint = scene.add.text(LAYOUT.W / 2, popupY + 100, '是否继续上次的进度？', {
+    fontSize: '15px',
+    fontFamily: '"Courier New", monospace',
+    color: '#aaccdd',
+  }).setOrigin(0.5);
+
+  // 继续游戏按钮
+  const continueBtn = scene.add.container(LAYOUT.W / 2, popupY + 170);
+  const continueBg = scene.add.graphics();
+  continueBg.fillStyle(0x113322, 1);
+  continueBg.fillRoundedRect(-100, -22, 200, 44, 10);
+  continueBg.lineStyle(2, 0x44ff88, 1);
+  continueBg.strokeRoundedRect(-100, -22, 200, 44, 10);
+  continueBtn.add(continueBg);
+
+  const continueText = scene.add.text(0, 0, '继续游戏', {
+    fontSize: '17px',
+    fontFamily: '"Courier New", monospace',
+    color: '#44ff88',
+    fontStyle: 'bold',
+  }).setOrigin(0.5);
+  continueBtn.add(continueText);
+
+  const continueHit = scene.add.rectangle(0, 0, 200, 44, 0xffffff, 0)
+    .setInteractive({ useHandCursor: true });
+  continueBtn.add(continueHit);
+
+  continueHit.on('pointerover', () => {
+    continueBg.clear();
+    continueBg.fillStyle(0x1a4433, 1);
+    continueBg.fillRoundedRect(-100, -22, 200, 44, 10);
+    continueBg.lineStyle(2, 0x88ffaa, 1);
+    continueBg.strokeRoundedRect(-100, -22, 200, 44, 10);
+  });
+  continueHit.on('pointerout', () => {
+    continueBg.clear();
+    continueBg.fillStyle(0x113322, 1);
+    continueBg.fillRoundedRect(-100, -22, 200, 44, 10);
+    continueBg.lineStyle(2, 0x44ff88, 1);
+    continueBg.strokeRoundedRect(-100, -22, 200, 44, 10);
+  });
+  continueHit.on('pointerdown', () => {
+    overlay.destroy();
+    popup.destroy();
+    title.destroy();
+    hint.destroy();
+    continueBtn.destroy();
+    newGameBtn.destroy();
+
+    if (loadGame()) {
+      // 恢复成功，初始化场景
+      initLevel(GameState.depthLevel);
+      setupScene(scene);
+      addLog('系统', '=== 存档已加载 ===');
+      addLog('系统', `当前深度：${DEPTH_LEVELS[GameState.depthLevel].label}`);
+      refreshUI(scene);
+      // 加载存档后显示地图选择继续探索
+      scene.time.delayedCall(400, () => {
+        showMapSelectionPopup(scene, (node) => handleMapNodeSelected(scene, node));
+      });
+    } else {
+      // 加载失败，开新游戏
+      startNewGame(scene);
+    }
+  });
+
+  // 新游戏按钮
+  const newGameBtn = scene.add.container(LAYOUT.W / 2, popupY + 230);
+  const newGameBg = scene.add.graphics();
+  newGameBg.fillStyle(0x331122, 1);
+  newGameBg.fillRoundedRect(-100, -22, 200, 44, 10);
+  newGameBg.lineStyle(2, 0xff6644, 1);
+  newGameBg.strokeRoundedRect(-100, -22, 200, 44, 10);
+  newGameBtn.add(newGameBg);
+
+  const newGameText = scene.add.text(0, 0, '开始新游戏', {
+    fontSize: '17px',
+    fontFamily: '"Courier New", monospace',
+    color: '#ff6644',
+    fontStyle: 'bold',
+  }).setOrigin(0.5);
+  newGameBtn.add(newGameText);
+
+  const newGameHit = scene.add.rectangle(0, 0, 200, 44, 0xffffff, 0)
+    .setInteractive({ useHandCursor: true });
+  newGameBtn.add(newGameHit);
+
+  newGameHit.on('pointerover', () => {
+    newGameBg.clear();
+    newGameBg.fillStyle(0x442222, 1);
+    newGameBg.fillRoundedRect(-100, -22, 200, 44, 10);
+    newGameBg.lineStyle(2, 0xff8866, 1);
+    newGameBg.strokeRoundedRect(-100, -22, 200, 44, 10);
+  });
+  newGameHit.on('pointerout', () => {
+    newGameBg.clear();
+    newGameBg.fillStyle(0x331122, 1);
+    newGameBg.fillRoundedRect(-100, -22, 200, 44, 10);
+    newGameBg.lineStyle(2, 0xff6644, 1);
+    newGameBg.strokeRoundedRect(-100, -22, 200, 44, 10);
+  });
+  newGameHit.on('pointerdown', () => {
+    deleteSave();
+    overlay.destroy();
+    popup.destroy();
+    title.destroy();
+    hint.destroy();
+    continueBtn.destroy();
+    newGameBtn.destroy();
+    startNewGame(scene);
+  });
+}
+
+/** 开始新游戏 */
+function startNewGame(scene) {
   /* ---------- 初始化 ---------- */
   GameState.player = new Player();
   GameState.depthLevel = 0;
@@ -159,17 +355,34 @@ function create() {
   GameState.visitedNodes = [];
   GameState.nodeBattleCount = 0;
   GameState.battlesPerLayer = 2;
+  GameState.currentMapData = null;
+  GameState.gold = 0;
+  GameState.isMiniBossBattle = false;
 
   initLevel(GameState.depthLevel);
+  setupScene(scene);
 
+  addLog('系统', `=== 强渡火星 ===`);
+  addLog('系统', `当前深度：${DEPTH_LEVELS[GameState.depthLevel].label}`);
+  addLog('系统', `选择下潜路径...`);
+
+  refreshUI(scene);
+  // 新游戏：显示地图选择
+  scene.time.delayedCall(500, () => {
+    showMapSelectionPopup(scene, (node) => handleMapNodeSelected(scene, node));
+  });
+}
+
+/** 场景 UI 初始化（新游戏和加载存档共用） */
+function setupScene(scene) {
   /* ---------- 背景 ---------- */
-  setBackgroundForLevel(this, GameState.depthLevel);
+  setBackgroundForLevel(scene, GameState.depthLevel);
 
   /* ---------- 顶部状态栏 ---------- */
-  createDepthUI(this);
+  createDepthUI(scene);
 
   /* ---------- 日志 ---------- */
-  logText = this.add.text(W / 2, 58, '', {
+  logText = scene.add.text(LAYOUT.W / 2, 58, '', {
     fontSize: '14px',
     fontFamily: '"Courier New", monospace',
     color: '#ffddbb',
@@ -181,14 +394,24 @@ function create() {
   }).setOrigin(0.5, 0);
 
   /* ---------- 角色对抗区 ---------- */
-  createPlayerUI(this);
-  createEnemyUI(this);
+  createPlayerUI(scene);
+  createEnemyUI(scene);
 
   /* ---------- 药水槽 UI ---------- */
-  createPotionUI(this);
+  createPotionUI(scene);
+
+  /* ---------- 金币显示 ---------- */
+  goldText = scene.add.text(LAYOUT.W - 100, 50, '', {
+    fontSize: '16px',
+    fontFamily: '"Courier New", monospace',
+    color: '#ffdd44',
+    fontStyle: 'bold',
+    stroke: '#000000',
+    strokeThickness: 3,
+  }).setOrigin(0.5).setDepth(100);
 
   /* ---------- 阶段提示 ---------- */
-  turnPhaseText = this.add.text(W / 2, 370, '', {
+  turnPhaseText = scene.add.text(LAYOUT.W / 2, LAYOUT.turnPhaseY, '', {
     fontSize: '15px',
     fontFamily: '"Courier New", monospace',
     color: '#ffaa44',
@@ -198,7 +421,7 @@ function create() {
   }).setOrigin(0.5);
 
   /* ---------- 牌库信息（左右下角） ---------- */
-  drawPileText = this.add.text(80, 440, '', {
+  drawPileText = scene.add.text(40, LAYOUT.drawPileY, '', {
     fontSize: '14px',
     fontFamily: '"Courier New", monospace',
     color: '#ffccaa',
@@ -207,7 +430,7 @@ function create() {
     strokeThickness: 3,
   }).setOrigin(0.5);
 
-  discardPileText = this.add.text(W - 80, 440, '', {
+  discardPileText = scene.add.text(LAYOUT.W - 40, LAYOUT.discardPileY, '', {
     fontSize: '14px',
     fontFamily: '"Courier New", monospace',
     color: '#ffccaa',
@@ -217,15 +440,17 @@ function create() {
   }).setOrigin(0.5);
 
   /* ---------- 结束回合按钮 ---------- */
-  endTurnBtn = createEndTurnButton(this);
+  endTurnBtn = createEndTurnButton(scene);
 
-  /* ---------- 启动 ---------- */
-  addLog('系统', `=== 强渡火星 ===`);
-  addLog('系统', `当前深度：${DEPTH_LEVELS[GameState.depthLevel].label}`);
-  addLog('系统', `敌军：${GameState.enemy.name} 出现了！`);
-  // 首次启动：显示地图选择
-  this.time.delayedCall(500, () => {
-    showMapSelectionPopup(this, (node) => handleMapNodeSelected(this, node));
+  /* ---------- 窗口 resize 监听：方向改变时重新布局 ---------- */
+  scene.scale.on('resize', (gameSize) => {
+    const wasPortrait = isPortrait;
+    computeLayout();
+    if (wasPortrait !== isPortrait) {
+      // 方向改变，需要重新布局所有UI
+      // 简单方案：重新启动场景
+      scene.scene.restart();
+    }
   });
 }
 
@@ -240,7 +465,7 @@ function setBackgroundForLevel(scene, levelIndex) {
 
   backgroundImage = scene.add.image(0, 0, bgKey)
     .setOrigin(0)
-    .setDisplaySize(W, H)
+    .setDisplaySize(LAYOUT.W, LAYOUT.H)
     .setDepth(-10);
 }
 
@@ -259,11 +484,11 @@ function updateDepthUI(scene) {
 
   // 背景条
   depthUI.fillStyle(0x0a0505, 0.92);
-  depthUI.fillRect(0, 0, W, barH);
+  depthUI.fillRect(0, 0, LAYOUT.W, barH);
 
   // 顶部霓虹绿线
   depthUI.lineStyle(1, 0x33ff77, 0.6);
-  depthUI.lineBetween(0, barH - 1, W, barH - 1);
+  depthUI.lineBetween(0, barH - 1, LAYOUT.W, barH - 1);
 
   // 左侧标签
   depthUI.fillStyle(0x22aa44, 1);
@@ -273,12 +498,20 @@ function updateDepthUI(scene) {
   for (const lbl of depthSegLabels) { lbl.destroy(); }
   depthSegLabels = [];
 
-  // 三段式深度指示条
+  // 三段式深度指示条（竖屏时缩小以适配窄屏）
   const indicatorY = barH / 2;
-  const indicatorStartX = 300;
-  const segmentW = 160;
   const segmentH = 16;
-  const gap = 10;
+  let indicatorStartX, segmentW, gap;
+  if (isPortrait) {
+    segmentW = 120;
+    gap = 8;
+    const totalIndicatorW = 3 * segmentW + 2 * gap;
+    indicatorStartX = (LAYOUT.W - totalIndicatorW) / 2;
+  } else {
+    indicatorStartX = 300;
+    segmentW = 160;
+    gap = 10;
+  }
 
   for (let i = 0; i < 3; i++) {
     const lvl = DEPTH_LEVELS[i];
@@ -314,7 +547,7 @@ function updateDepthUI(scene) {
   if (depthText) depthText.destroy();
   const depthStr = GameState.depthLevel === 0 ? '地表' :
     GameState.depthLevel === 1 ? '地下浅层' : '地核深处';
-  depthText = scene.add.text(W / 2, 10, `◈ 探索深度  ${DEPTH_LEVELS[GameState.depthLevel].depth}  —  ${depthStr}`, {
+  depthText = scene.add.text(LAYOUT.W / 2, 10, `◈ 探索深度  ${DEPTH_LEVELS[GameState.depthLevel].depth}  —  ${depthStr}`, {
     fontSize: '16px',
     fontFamily: '"Courier New", monospace',
     color: '#66ff99',
@@ -330,8 +563,8 @@ function updateDepthUI(scene) {
 function createPlayerUI(scene) {
   playerContainer = scene.add.container(0, 0);
 
-  const px = 200;
-  const py = 250;
+  const px = LAYOUT.playerX;
+  const py = LAYOUT.playerY;
 
   // 玩家底色板（遮挡非透明资源背景）
   const playerBg = scene.add.graphics();
@@ -374,6 +607,9 @@ function createPlayerUI(scene) {
     strokeThickness: 3,
   }).setOrigin(0.5);
   playerContainer.add(nameText);
+
+  // HP 条位置（顶部，对齐敌人血条 Y=150）
+  // 在 updatePlayerUI 中使用 hpBarY = 150
 
   // HP 条
   playerHpBarBg = scene.add.graphics();
@@ -449,9 +685,9 @@ function drawStar(gfx, cx, cy, points, outerR, innerR) {
 }
 
 function updatePlayerUI(scene) {
-  const px = 200;
-  const hpBarY = 120;
-  const hpBarW = 170;
+  const px = LAYOUT.playerX;
+  const hpBarY = LAYOUT.hpBarY;
+  const hpBarW = LAYOUT.hpBarW;
   const hpBarH = 14;
   const hpBarX = px - hpBarW / 2;
 
@@ -492,7 +728,7 @@ function updatePlayerUI(scene) {
   }
 
   // 电池槽（动态增减，以适配遗物提升的最大电量）
-  const battY = 420;
+  const battY = LAYOUT.batteryY;
   while (batterySlots.length < GameState.player.maxBattery) {
     const slot = scene.add.graphics();
     playerContainer.add(slot);
@@ -615,8 +851,8 @@ function updatePotionUI(scene) {
   for (const c of GameState.potionContainers) { c.destroy(); }
   GameState.potionContainers = [];
 
-  const px = 200;
-  const potionY = 468;
+  const px = LAYOUT.playerX;
+  const potionY = LAYOUT.potionY;
   const slotSize = 32;
   const slotGap = 8;
   const totalSlots = GameState.MAX_POTIONS;
@@ -774,7 +1010,7 @@ function shakePlayerUI(scene) {
 
   playerHpBarFill.clear();
   playerHpBarFill.fillStyle(0xff0000, 0.9);
-  const px = 200;
+  const px = LAYOUT.playerX;
   const hpBarY = 120;
   const hpBarW = 170;
   const hpBarH = 14;
@@ -790,8 +1026,8 @@ function shakePlayerUI(scene) {
 function createEnemyUI(scene) {
   enemyContainer = scene.add.container(0, 0);
 
-  const ex = 820;
-  const ey = 250;
+  const ex = LAYOUT.enemyX;
+  const ey = LAYOUT.enemyY;
 
   // 敌人底色板
   const enemyBg = scene.add.graphics();
@@ -871,11 +1107,15 @@ function createEnemyUI(scene) {
 function updateEnemyUI(scene) {
   if (!GameState.enemy) return;
 
-  const ex = 820;
-  const ey = 250;
-  const spriteHeight = 180;
-  const hpBarY = 120;
-  const hpBarW = 170;
+  const ex = LAYOUT.enemyX;
+  const ey = LAYOUT.enemyY;
+  const spriteHeight = 170;
+  // 意图区域：顶部 56-92（图标+文字）
+  const intentIconY = LAYOUT.intentIconY;
+  const intentTextY = LAYOUT.intentTextY;
+  // 血条区域：下移到 150，避开意图
+  const hpBarY = LAYOUT.enemyHpBarY;
+  const hpBarW = LAYOUT.hpBarW + 10;
   const hpBarH = 14;
   const hpBarX = ex - hpBarW / 2;
 
@@ -891,10 +1131,11 @@ function updateEnemyUI(scene) {
     enemySprite.setAlpha(0);
   }
 
+  // 敌人名（立绘下方）
   enemyNameText.setPosition(ex, ey + 98);
   enemyNameText.setText(`◥ ${GameState.enemy.name}`);
 
-  // HP 条
+  // HP 条背景
   enemyHpBarBg.clear();
   enemyHpBarBg.fillStyle(0x2a1410, 1);
   enemyHpBarBg.fillRoundedRect(hpBarX, hpBarY, hpBarW, hpBarH, 4);
@@ -917,27 +1158,25 @@ function updateEnemyUI(scene) {
   enemyHpText.setPosition(ex, hpBarY + hpBarH / 2);
   enemyHpText.setText(`${GameState.enemy.hp}/${GameState.enemy.maxHp}`);
 
-  // 护盾文字
+  // 护盾文字（移到血条左侧，避免与状态图标冲突）
   if (GameState.enemy.shield > 0) {
-    enemyShieldText.setPosition(ex + hpBarW / 2 + 28, hpBarY + hpBarH / 2);
+    enemyShieldText.setPosition(ex - hpBarW / 2 - 30, hpBarY + hpBarH / 2);
     enemyShieldText.setText(`护盾 ${GameState.enemy.shield}`);
   } else {
     enemyShieldText.setText('');
   }
 
-  // 状态效果图标（血条下方，意图上方）
+  // 状态效果图标（血条下方）
   for (const icon of enemyStatusIcons) { icon.destroy(); }
   enemyStatusIcons = [];
-  drawStatusIcons(scene, enemyContainer, ex - 60, hpBarY + hpBarH + 8, GameState.enemy, enemyStatusIcons);
+  drawStatusIcons(scene, enemyContainer, ex - 60, hpBarY + hpBarH + 12, GameState.enemy, enemyStatusIcons);
 
-  // 意图（整体上移，避免与血条重叠）
-  const intentIconY = 72;
-  const intentTextY = 96;
+  // 意图（顶部，与血条分离）
   drawIntentIcon(scene, ex, intentIconY, GameState.enemy);
   enemyIntentText.setPosition(ex, intentTextY);
   enemyIntentText.setText(GameState.enemy.getIntentDescription());
 
-  // Boss 蓄力视觉：淡红色呼吸灯 + 头顶警告文字
+  // Boss 蓄力视觉：淡红色呼吸灯 + 头顶警告文字（移到立绘顶部上方，不遮挡血条）
   const isBossCharging = GameState.enemy.pattern === ENEMY_PATTERN.BOSS_CHARGE &&
                          GameState.enemy.currentCharge < GameState.enemy.chargeTurns;
   if (isBossCharging) {
@@ -951,8 +1190,9 @@ function updateEnemyUI(scene) {
         repeat: -1,
         ease: 'Sine.easeInOut',
       });
-      bossWarningText = scene.add.text(ex, ey - 125, '[ BOSS 正在疯狂凝聚地核能量... ]', {
-        fontSize: '20px',
+      // 警告文字放在敌人头顶（立绘上方），不再遮挡血条
+      bossWarningText = scene.add.text(ex, ey - 100, '⚠ BOSS 蓄能中 ⚠', {
+        fontSize: '16px',
         fontFamily: '"Courier New", monospace',
         color: '#ff4422',
         fontStyle: 'bold',
@@ -1039,7 +1279,7 @@ function shakeEnemyUI(scene) {
 
   enemyHpBarFill.clear();
   enemyHpBarFill.fillStyle(0xff0000, 0.9);
-  const ex = 820;
+  const ex = LAYOUT.enemyX;
   const hpBarY = 120;
   const hpBarW = 170;
   const hpBarH = 14;
@@ -1071,6 +1311,10 @@ function refreshUI(scene) {
   drawPileText.setText(`抽牌堆: ${GameState.drawPile.size} 张`);
   discardPileText.setText(`弃牌堆: ${GameState.discardPile.length} 张`);
 
+  if (goldText) {
+    goldText.setText(`◆ ${GameState.gold} 金币`);
+  }
+
   if (GameState.turnPhase === 'playerTurn') {
     turnPhaseText.setText('▶ 玩家回合');
   } else if (GameState.turnPhase === 'enemyTurn') {
@@ -1089,10 +1333,10 @@ function spawnFloatingText(scene, target, text, color, offsetY, fontSize = '20px
   let targetX, targetY;
 
   if (target === 'player') {
-    targetX = 200;
+    targetX = LAYOUT.playerX;
     targetY = 110 + (offsetY || 0);
   } else {
-    targetX = 820;
+    targetX = LAYOUT.enemyX;
     targetY = 110 + (offsetY || 0);
   }
 
@@ -1129,8 +1373,8 @@ function renderHand(scene) {
 
   const gap = 10;
   const totalW = GameState.hand.length * CARD_W + (GameState.hand.length - 1) * gap;
-  const startX = (W - totalW) / 2 + CARD_W / 2;
-  const y = 510;
+  const startX = (LAYOUT.W - totalW) / 2 + CARD_W / 2;
+  const y = isPortrait ? LAYOUT.H - 90 : 510;
 
   for (let i = 0; i < GameState.hand.length; i++) {
     const card = GameState.hand[i];
@@ -1239,7 +1483,7 @@ function createCardGraphics(scene, x, y, w, h, card, index) {
  * 结束回合按钮
  * ============================================================ */
 function createEndTurnButton(scene) {
-  const container = scene.add.container(W / 2, 600);
+  const container = scene.add.container(LAYOUT.W / 2, isPortrait ? LAYOUT.H - 40 : 600);
 
   const btnW = 160;
   const btnH = 42;
@@ -1324,17 +1568,17 @@ function playTransitionToNextLevel(scene, callback) {
 
   const overlay = scene.add.graphics();
   overlay.fillStyle(0x000000, 0);
-  overlay.fillRect(0, 0, W, H);
+  overlay.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
 
   const nextLevel = DEPTH_LEVELS[GameState.depthLevel + 1];
-  const transitText = scene.add.text(W / 2, H / 2 - 40, '▼ 向下潜入中...', {
+  const transitText = scene.add.text(LAYOUT.W / 2, LAYOUT.H / 2 - 40, '▼ 向下潜入中...', {
     fontSize: '36px',
     fontFamily: '"Courier New", monospace',
     color: '#ff8844',
     fontStyle: 'bold',
   }).setOrigin(0.5).setAlpha(0);
 
-  const depthLabel = scene.add.text(W / 2, H / 2 + 20, `目标深度：${nextLevel.label}`, {
+  const depthLabel = scene.add.text(LAYOUT.W / 2, LAYOUT.H / 2 + 20, `目标深度：${nextLevel.label}`, {
     fontSize: '20px',
     fontFamily: '"Courier New", monospace',
     color: '#cc8866',
@@ -1350,7 +1594,7 @@ function playTransitionToNextLevel(scene, callback) {
   scene.tweens.add({
     targets: transitText,
     alpha: 1,
-    y: H / 2 - 50,
+    y: LAYOUT.H / 2 - 50,
     duration: 400,
     ease: 'Power2',
   });
@@ -1369,7 +1613,7 @@ function playTransitionToNextLevel(scene, callback) {
       flashCount++;
       const flash = scene.add.graphics();
       flash.fillStyle(0xffffff, flashCount % 2 === 1 ? 0.15 : 0);
-      flash.fillRect(0, 0, W, H);
+      flash.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
       scene.time.delayedCall(100, () => flash.destroy());
 
       if (flashCount >= 6) {
@@ -1400,60 +1644,163 @@ const MAP_NODE_TYPES = {
   ELITE:  { key: 'elite',  name: '精英', color: 0xaa22aa, icon: '★', desc: '精英战斗，高难度高奖励（必出药水）' },
   REST:   { key: 'rest',   name: '休息', color: 0x44aa66, icon: '♡', desc: '恢复 30% 最大生命值' },
   EVENT:  { key: 'event',  name: '事件', color: 0xddaa22, icon: '?', desc: '随机事件，风险与收益并存' },
+  SHOP:   { key: 'shop',   name: '商店', color: 0xddaa44, icon: '$', desc: '花费金币购买卡牌/遗物/药水或移除卡牌' },
 };
 
-/** 生成当前层的地图节点（3个可选） */
-function generateMapNodes() {
-  const nodes = [];
-  const nodeTypeKeys = Object.values(MAP_NODE_TYPES);
+/** 生成杀戮尖塔式整层地图（一次性生成完整路径图） */
+function generateFullMap() {
+  const ROWS = 7;          // 总行数（最后一行是Boss）
+  const COLS = 4;          // 列数（每行最多4个节点位置）
+  const NODE_TYPES = Object.values(MAP_NODE_TYPES);
 
-  // 第一层第一个节点固定为战斗
-  if (GameState.depthLevel === 0 && GameState.nodeBattleCount === 0) {
-    nodes.push({ ...MAP_NODE_TYPES.BATTLE });
-    nodes.push({ ...MAP_NODE_TYPES.BATTLE });
-    nodes.push({ ...MAP_NODE_TYPES.REST });
-    return nodes;
+  // 初始化网格：map[row][col] = node 或 null
+  const grid = [];
+  for (let r = 0; r < ROWS; r++) {
+    grid.push([null, null, null, null]);
   }
 
-  // 随机生成3个不同类型的节点
-  const availableTypes = [...nodeTypeKeys];
-  for (let i = 0; i < 3; i++) {
-    const idx = Math.floor(Math.random() * availableTypes.length);
-    nodes.push({ ...availableTypes[idx] });
-    availableTypes.splice(idx, 1);
+  // 生成每行的节点（最后一行固定Boss）
+  for (let r = 0; r < ROWS - 1; r++) {
+    // 每行 2-3 个节点
+    const nodeCount = r === 0 ? 3 : (Math.random() < 0.5 ? 2 : 3);
+    // 随机选择列位置
+    const colPositions = [];
+    while (colPositions.length < nodeCount) {
+      const col = Math.floor(Math.random() * COLS);
+      if (!colPositions.includes(col)) colPositions.push(col);
+    }
+    colPositions.sort((a, b) => a - b);
+
+    for (const col of colPositions) {
+      // 第一行第一列固定为战斗（教程性质）
+      let nodeType;
+      if (r === 0 && col === colPositions[0]) {
+        nodeType = { ...MAP_NODE_TYPES.BATTLE };
+      } else if (r === 0) {
+        // 第一行偏向战斗和休息
+        nodeType = Math.random() < 0.6 ? { ...MAP_NODE_TYPES.BATTLE } : { ...MAP_NODE_TYPES.REST };
+      } else {
+        // 随机选择类型，战斗权重高一些
+        const weightedTypes = [
+          ...Array(4).fill(MAP_NODE_TYPES.BATTLE),
+          ...Array(1).fill(MAP_NODE_TYPES.ELITE),
+          ...Array(2).fill(MAP_NODE_TYPES.EVENT),
+          ...Array(1).fill(MAP_NODE_TYPES.SHOP),
+          ...Array(1).fill(MAP_NODE_TYPES.REST),
+        ];
+        nodeType = { ...weightedTypes[Math.floor(Math.random() * weightedTypes.length)] };
+      }
+      grid[r][col] = {
+        ...nodeType,
+        row: r,
+        col,
+        id: `${r}-${col}`,
+        visited: false,
+        reachable: r === 0, // 第一行默认可达
+        connections: [],    // 到下一行节点的连接
+      };
+    }
   }
 
-  return nodes;
+  // 最后一行：Boss（居中）
+  const bossCol = 1; // 固定在列1
+  grid[ROWS - 1][bossCol] = {
+    ...MAP_NODE_TYPES.BATTLE,
+    name: '小 Boss',
+    icon: '☠',
+    color: 0xcc2222,
+    desc: `迎战 ${ENEMY_CATALOG[DEPTH_LEVELS[GameState.depthLevel].miniBoss].name}`,
+    row: ROWS - 1,
+    col: bossCol,
+    id: `boss-${GameState.depthLevel}`,
+    visited: false,
+    reachable: false,
+    isBossNode: true,
+    connections: [],
+  };
+
+  // 建立连接：每个节点连接到下一行相邻1-2个节点
+  for (let r = 0; r < ROWS - 1; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const node = grid[r][c];
+      if (!node) continue;
+
+      // 下一行中，连接到 col-1, col, col+1 的节点
+      const possibleNextCols = [c - 1, c, c + 1].filter(nc => nc >= 0 && nc < COLS);
+      const nextNodes = possibleNextCols.map(nc => grid[r + 1][nc]).filter(n => n);
+
+      if (nextNodes.length === 0) continue;
+
+      // 随机选 1-2 个连接
+      const connectionCount = Math.min(nextNodes.length, Math.random() < 0.4 ? 2 : 1);
+      const shuffled = [...nextNodes].sort(() => Math.random() - 0.5);
+      for (let i = 0; i < connectionCount; i++) {
+        node.connections.push(shuffled[i].id);
+      }
+    }
+  }
+
+  // 反向传播可达性：从已访问节点向下传递
+  // 这里简化处理：第一行全部 reachable，之后根据连接传递
+  function updateReachable() {
+    // 清除非第一行节点的 reachable（除非已访问）
+    for (let r = 1; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const n = grid[r][c];
+        if (n && !n.visited) n.reachable = false;
+      }
+    }
+    // 从已访问节点的连接向下传递
+    for (let r = 0; r < ROWS - 1; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const n = grid[r][c];
+        if (n && n.visited) {
+          for (const connId of n.connections) {
+            const [nr, nc] = connId.split('-').map(Number);
+            const target = grid[nr][nc];
+            if (target && !target.visited) {
+              target.reachable = true;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return { grid, ROWS, COLS, updateReachable };
 }
 
-/** 显示地图路线选择弹窗 */
+/** 显示杀戮尖塔式地图路线选择弹窗 */
 function showMapSelectionPopup(scene, onNodeSelected) {
   GameState.turnPhase = 'mapSelection';
 
-  const nodes = generateMapNodes();
-  GameState.currentMapNodes = nodes;
+  // 首次进入本层时生成完整地图
+  if (!GameState.currentMapData) {
+    const mapData = generateFullMap();
+    GameState.currentMapData = mapData;
+  }
+  const { grid, ROWS, COLS, updateReachable } = GameState.currentMapData;
+  updateReachable();
 
   const overlay = scene.add.graphics();
-  overlay.fillStyle(0x000000, 0.9);
-  overlay.fillRect(0, 0, W, H);
+  overlay.fillStyle(0x000000, 0.92);
+  overlay.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
 
-  const popupW = 760;
-  const popupH = 420;
-  const popupX = (W - popupW) / 2;
-  const popupY = (H - popupH) / 2;
+  const popupW = Math.min(760, LAYOUT.W - 40);
+  const popupH = Math.min(620, LAYOUT.H - 20);
+  const popupX = (LAYOUT.W - popupW) / 2;
+  const popupY = (LAYOUT.H - popupH) / 2;
 
   const popup = scene.add.graphics();
-  popup.fillStyle(0x0a1a1a, 0.97);
+  popup.fillStyle(0x0a1a1a, 0.98);
   popup.fillRoundedRect(popupX, popupY, popupW, popupH, 18);
   popup.lineStyle(3, 0x44ff88, 1);
   popup.strokeRoundedRect(popupX, popupY, popupW, popupH, 18);
-  popup.lineStyle(1, 0x88ffaa, 0.5);
-  popup.strokeRoundedRect(popupX + 6, popupY + 6, popupW - 12, popupH - 12, 14);
   popup.fillStyle(0x44ff88, 0.9);
   popup.fillRect(popupX + 30, popupY + 28, popupW - 60, 3);
 
-  const title = scene.add.text(W / 2, popupY + 55, '◆ 选择下潜路径 ◆', {
-    fontSize: '26px',
+  const title = scene.add.text(LAYOUT.W / 2, popupY + 55, '◆ 火星地下路径图 ◆', {
+    fontSize: '24px',
     fontFamily: '"Courier New", monospace',
     color: '#44ff88',
     fontStyle: 'bold',
@@ -1461,118 +1808,160 @@ function showMapSelectionPopup(scene, onNodeSelected) {
     strokeThickness: 4,
   }).setOrigin(0.5);
 
-  const layerLabel = scene.add.text(W / 2, popupY + 92, `当前深度：${DEPTH_LEVELS[GameState.depthLevel].label}  |  已完成战斗：${GameState.nodeBattleCount}/${GameState.battlesPerLayer}`, {
-    fontSize: '14px',
+  const layerLabel = scene.add.text(LAYOUT.W / 2, popupY + 88, `深度：${DEPTH_LEVELS[GameState.depthLevel].label}`, {
+    fontSize: '13px',
     fontFamily: '"Courier New", monospace',
     color: '#aaffcc',
   }).setOrigin(0.5);
 
-  const nodeW = 200;
-  const nodeH = 240;
-  const gap = 30;
-  const totalW = nodes.length * nodeW + (nodes.length - 1) * gap;
-  const startX = (W - totalW) / 2 + nodeW / 2;
-  const nodeY = popupY + 230;
+  // 节点坐标计算
+  const mapAreaY = popupY + 115;
+  const mapAreaH = popupH - 135;
+  const rowGap = mapAreaH / ROWS;
+  const colGap = (popupW - 60) / COLS;
+  const nodeRadius = 20;
 
+  const nodePosition = (r, c) => ({
+    x: popupX + 30 + colGap * (c + 0.5),
+    y: mapAreaY + rowGap * (r + 0.5),
+  });
+
+  // 绘制连接线
+  const linesGfx = scene.add.graphics();
+  for (let r = 0; r < ROWS - 1; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const node = grid[r][c];
+      if (!node) continue;
+      const from = nodePosition(r, c);
+      for (const connId of node.connections) {
+        const [nr, nc] = connId.split('-').map(Number);
+        const to = nodePosition(nr, nc);
+        const isPathTaken = node.visited;
+        linesGfx.lineStyle(2, isPathTaken ? 0x44ff88 : 0x334455, isPathTaken ? 0.9 : 0.5);
+        linesGfx.lineBetween(from.x, from.y, to.x, to.y);
+      }
+    }
+  }
+
+  // 绘制节点
   const nodeObjects = [];
 
-  for (let i = 0; i < nodes.length; i++) {
-    const node = nodes[i];
-    const x = startX + i * (nodeW + gap);
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const node = grid[r][c];
+      if (!node) continue;
 
-    const container = scene.add.container(x, nodeY);
+      const pos = nodePosition(r, c);
+      const container = scene.add.container(pos.x, pos.y);
 
-    // 节点背景
-    const bg = scene.add.graphics();
-    bg.fillStyle(0x0a2a1a, 0.98);
-    bg.fillRoundedRect(-nodeW / 2, -nodeH / 2, nodeW, nodeH, 12);
-    bg.lineStyle(2, node.color, 0.9);
-    bg.strokeRoundedRect(-nodeW / 2, -nodeH / 2, nodeW, nodeH, 12);
-    container.add(bg);
+      // 节点背景圆
+      const bg = scene.add.graphics();
+      const drawNode = (highlighted) => {
+        bg.clear();
+        // 已访问：暗色实心
+        if (node.visited) {
+          bg.fillStyle(0x223322, 0.9);
+          bg.fillCircle(0, 0, nodeRadius);
+          bg.lineStyle(2, node.color, 0.5);
+          bg.strokeCircle(0, 0, nodeRadius);
+        } else if (node.reachable) {
+          // 可达：高亮 + 脉冲
+          bg.fillStyle(highlighted ? 0x2a4a2a : 0x1a3a2a, 0.95);
+          bg.fillCircle(0, 0, nodeRadius + (highlighted ? 4 : 0));
+          bg.lineStyle(3, highlighted ? 0x88ffaa : node.color, 1);
+          bg.strokeCircle(0, 0, nodeRadius + (highlighted ? 4 : 0));
+        } else {
+          // 不可达：暗灰
+          bg.fillStyle(0x111111, 0.7);
+          bg.fillCircle(0, 0, nodeRadius * 0.8);
+          bg.lineStyle(1, 0x444444, 0.5);
+          bg.strokeCircle(0, 0, nodeRadius * 0.8);
+        }
+      };
+      drawNode(false);
+      container.add(bg);
 
-    // 顶部颜色条
-    const topBar = scene.add.graphics();
-    topBar.fillStyle(node.color, 0.85);
-    topBar.fillRoundedRect(-nodeW / 2 + 8, -nodeH / 2 + 8, nodeW - 16, 36, { tl: 6, tr: 6, bl: 0, br: 0 });
-    container.add(topBar);
+      // 节点图标
+      const iconText = scene.add.text(0, 0, node.icon, {
+        fontSize: node.isBossNode ? '22px' : '16px',
+        fontFamily: '"Courier New", monospace',
+        color: node.visited ? '#666666' : (node.reachable ? '#ffffff' : '#444444'),
+        fontStyle: 'bold',
+      }).setOrigin(0.5);
+      container.add(iconText);
 
-    // 节点类型图标（大字）
-    const iconText = scene.add.text(0, -nodeH / 2 + 26, node.icon, {
-      fontSize: '24px',
+      // 可达节点添加脉冲动画
+      let pulseTween = null;
+      if (node.reachable && !node.visited) {
+        pulseTween = scene.tweens.add({
+          targets: container,
+          scaleX: 1.1, scaleY: 1.1,
+          duration: 800,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+      }
+
+      // 点击热区
+      const hitZone = scene.add.rectangle(0, 0, nodeRadius * 2.5, nodeRadius * 2.5, 0xffffff, 0);
+      if (node.reachable && !node.visited) {
+        hitZone.setInteractive({ useHandCursor: true });
+      }
+      container.add(hitZone);
+
+      if (node.reachable && !node.visited) {
+        hitZone.on('pointerover', () => {
+          scene.tweens.add({ targets: container, scaleX: 1.3, scaleY: 1.3, duration: 100 });
+          drawNode(true);
+        });
+        hitZone.on('pointerout', () => {
+          scene.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 100 });
+          drawNode(false);
+        });
+        hitZone.on('pointerdown', () => {
+          nodeObjects.forEach(n => { if (n.hitZone.disableInteractive) n.hitZone.disableInteractive(); });
+          if (pulseTween) pulseTween.stop();
+          scene.tweens.add({
+            targets: container,
+            scaleX: 1.8, scaleY: 1.8, alpha: 0,
+            duration: 250,
+            ease: 'Back.easeIn',
+            onComplete: () => {
+              cleanup();
+              onNodeSelected(node);
+            },
+          });
+        });
+      }
+
+      nodeObjects.push({ container, hitZone, bg, pulseTween });
+    }
+  }
+
+  // 节点类型图例
+  const legendY = popupY + popupH - 30;
+  const legendItems = [
+    { icon: '⚔', name: '战斗', color: '#cc4422' },
+    { icon: '★', name: '精英', color: '#aa22aa' },
+    { icon: '$', name: '商店', color: '#ddaa44' },
+    { icon: '♡', name: '休息', color: '#44aa66' },
+    { icon: '?', name: '事件', color: '#ddaa22' },
+    { icon: '☠', name: 'Boss', color: '#cc2222' },
+  ];
+  const legendTexts = [];
+  const legendGap = 90;
+  const legendStartX = LAYOUT.W / 2 - (legendItems.length - 1) * legendGap / 2;
+  for (let i = 0; i < legendItems.length; i++) {
+    const item = legendItems[i];
+    const lx = legendStartX + i * legendGap;
+    const lt = scene.add.text(lx, legendY, `${item.icon} ${item.name}`, {
+      fontSize: '12px',
       fontFamily: '"Courier New", monospace',
-      color: '#ffffff',
+      color: item.color,
       fontStyle: 'bold',
     }).setOrigin(0.5);
-    container.add(iconText);
-
-    // 节点名称
-    const nameText = scene.add.text(0, -nodeH / 2 + 70, node.name, {
-      fontSize: '20px',
-      fontFamily: '"Courier New", monospace',
-      color: '#ffffff',
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 3,
-    }).setOrigin(0.5);
-    container.add(nameText);
-
-    // 节点描述
-    const descText = scene.add.text(0, 10, node.desc, {
-      fontSize: '13px',
-      fontFamily: '"Courier New", monospace',
-      color: '#cceeff',
-      align: 'center',
-      wordWrap: { width: nodeW - 20 },
-      lineSpacing: 5,
-    }).setOrigin(0.5);
-    container.add(descText);
-
-    // 底部类型指示条
-    const typeBar = scene.add.graphics();
-    typeBar.fillStyle(node.color, 0.7);
-    typeBar.fillRoundedRect(-nodeW / 2 + 10, nodeH / 2 - 18, nodeW - 20, 7, 3);
-    container.add(typeBar);
-
-    // 点击热区
-    const hitZone = scene.add.rectangle(0, 0, nodeW + 20, nodeH + 20, 0xffffff, 0)
-      .setInteractive({ useHandCursor: true });
-    container.add(hitZone);
-
-    hitZone.on('pointerover', () => {
-      scene.tweens.add({ targets: container, scaleX: 1.06, scaleY: 1.06, duration: 100 });
-      bg.clear();
-      bg.fillStyle(0x1a3a2a, 0.99);
-      bg.fillRoundedRect(-nodeW / 2, -nodeH / 2, nodeW, nodeH, 12);
-      bg.lineStyle(3, 0x88ffaa, 1);
-      bg.strokeRoundedRect(-nodeW / 2, -nodeH / 2, nodeW, nodeH, 12);
-    });
-
-    hitZone.on('pointerout', () => {
-      scene.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 100 });
-      bg.clear();
-      bg.fillStyle(0x0a2a1a, 0.98);
-      bg.fillRoundedRect(-nodeW / 2, -nodeH / 2, nodeW, nodeH, 12);
-      bg.lineStyle(2, node.color, 0.9);
-      bg.strokeRoundedRect(-nodeW / 2, -nodeH / 2, nodeW, nodeH, 12);
-    });
-
-    hitZone.on('pointerdown', () => {
-      nodeObjects.forEach(n => n.hitZone.disableInteractive());
-      scene.tweens.add({
-        targets: container,
-        scaleX: 1.2,
-        scaleY: 1.2,
-        alpha: 0,
-        duration: 250,
-        ease: 'Back.easeIn',
-        onComplete: () => {
-          cleanup();
-          onNodeSelected(node);
-        },
-      });
-    });
-
-    nodeObjects.push({ container, hitZone, bg });
+    legendTexts.push(lt);
   }
 
   function cleanup() {
@@ -1580,13 +1969,30 @@ function showMapSelectionPopup(scene, onNodeSelected) {
     popup.destroy();
     title.destroy();
     layerLabel.destroy();
-    nodeObjects.forEach(n => n.container.destroy());
+    linesGfx.destroy();
+    nodeObjects.forEach(n => {
+      if (n.pulseTween) n.pulseTween.stop();
+      n.container.destroy();
+    });
+    legendTexts.forEach(t => t.destroy());
   }
 }
 
 /** 处理地图节点选择 */
 function handleMapNodeSelected(scene, node) {
   GameState.visitedNodes.push({ depthLevel: GameState.depthLevel, nodeType: node.key });
+
+  // 标记节点为已访问
+  if (GameState.currentMapData) {
+    const n = GameState.currentMapData.grid[node.row] && GameState.currentMapData.grid[node.row][node.col];
+    if (n) n.visited = true;
+  }
+
+  // Boss 节点：触发小 Boss 战
+  if (node.isBossNode) {
+    startMiniBossSequence(scene);
+    return;
+  }
 
   switch (node.key) {
     case 'battle':
@@ -1604,18 +2010,31 @@ function handleMapNodeSelected(scene, node) {
       GameState.player.hp += actualHeal;
       addLog('系统', `休息点：恢复 ${actualHeal} 点生命`);
       showRestScene(scene, actualHeal, () => {
-        GameState.nodeBattleCount++;
-        checkLayerProgression(scene);
+        showNextMapOrProgress(scene);
       });
       break;
     case 'event':
       // 随机事件
       triggerRandomEvent(scene, () => {
-        GameState.nodeBattleCount++;
-        checkLayerProgression(scene);
+        showNextMapOrProgress(scene);
+      });
+      break;
+    case 'shop':
+      // 商店
+      showShopPopup(scene, () => {
+        showNextMapOrProgress(scene);
       });
       break;
   }
+}
+
+/** 显示下一张地图或检查进度 */
+function showNextMapOrProgress(scene) {
+  refreshUI(scene);
+  autoSave(); // 自动保存
+  scene.time.delayedCall(300, () => {
+    showMapSelectionPopup(scene, (node) => handleMapNodeSelected(scene, node));
+  });
 }
 
 /** 开始地图战斗（普通或精英） */
@@ -1641,52 +2060,8 @@ function startMapBattle(scene, isElite) {
 /** 检查层进度：是否需要进入下一层 */
 function checkLayerProgression(scene) {
   if (GameState.nodeBattleCount >= GameState.battlesPerLayer) {
-    // 完成本层，进入下一层
-    if (GameState.depthLevel < DEPTH_LEVELS.length - 1) {
-      // 战后三选一奖励
-      const rewards = rollPostBattleRewards(3);
-      showCardRewardPopup(scene, rewards, (selectedCard) => {
-        GameState.drawPile.cards.push(selectedCard);
-        addLog('系统', `获得奖励卡牌：${selectedCard.name}`);
-        refreshUI(scene);
-
-        // 50% 概率获得药水
-        if (Math.random() < 0.5 && GameState.potions.length < GameState.MAX_POTIONS) {
-          const potion = rollPotionReward();
-          if (tryAddPotion(potion)) {
-            addLog('系统', `获得药水：${potion.name} — ${potion.desc}`);
-            refreshUI(scene);
-          }
-        }
-
-        // 进入下一层
-        playTransitionToNextLevel(scene, () => {
-          advanceLevel(scene);
-          GameState.nodeBattleCount = 0;
-
-          // 进入第二层时固定获得基础遗物
-          if (GameState.depthLevel === 1 && !GameState.player.relics.some(r => r.id === RELICS.marsPowerCore.id)) {
-            GameState.player.addRelic(RELICS.marsPowerCore);
-            addLog('系统', `获得遗物：${RELICS.marsPowerCore.name} — ${RELICS.marsPowerCore.desc}`);
-          }
-
-          refreshUI(scene);
-          GameState.discardPile = GameState.discardPile.concat(GameState.hand);
-          GameState.hand = [];
-          GameState.drawPile.reshuffle(GameState.discardPile);
-          GameState.discardPile = [];
-          refreshUI(scene);
-
-          // 显示地图选择
-          scene.time.delayedCall(300, () => {
-            showMapSelectionPopup(scene, (node) => handleMapNodeSelected(scene, node));
-          });
-        });
-      });
-    } else {
-      // 最后一层完成，迎战Boss
-      startBossSequence(scene);
-    }
+    // 完成本层战斗，迎战小 Boss
+    startMiniBossSequence(scene);
   } else {
     // 继续本层探索，显示地图选择
     refreshUI(scene);
@@ -1696,16 +2071,708 @@ function checkLayerProgression(scene) {
   }
 }
 
+/** 小 Boss 战序列 */
+function startMiniBossSequence(scene) {
+  const levelConfig = DEPTH_LEVELS[GameState.depthLevel];
+  const miniBossKey = levelConfig.miniBoss;
+
+  // 最后一层的小 Boss 就是最终 Boss
+  if (GameState.depthLevel === DEPTH_LEVELS.length - 1) {
+    startBossSequence(scene);
+    return;
+  }
+
+  addLog('系统', `⚠ 即将遭遇小 Boss：${ENEMY_CATALOG[miniBossKey].name} ⚠`);
+
+  // 过渡效果
+  playTransitionToNextLevel(scene, () => {
+    const miniBoss = Enemy.fromCatalog(miniBossKey);
+    miniBoss.isElite = true;
+    GameState.enemy = miniBoss;
+    GameState.isMiniBossBattle = true;
+    refreshUI(scene);
+
+    addLog('系统', `${miniBoss.name} 挡住了去路！`);
+
+    // 弃手牌
+    GameState.discardPile = GameState.discardPile.concat(GameState.hand);
+    GameState.hand = [];
+    GameState.drawPile.reshuffle(GameState.discardPile);
+    GameState.discardPile = [];
+    refreshUI(scene);
+
+    scene.time.delayedCall(400, () => startPlayerTurn(scene));
+  });
+}
+
+/** 小 Boss 战胜利后进入下一层 */
+function handleMiniBossDefeated(scene) {
+  addLog('系统', `击败小 Boss：${GameState.enemy.name}！`);
+
+  // 小 Boss 奖励：金币 + 药水 + 卡牌/升级/金币选择
+  const goldReward = 50;
+  GameState.gold += goldReward;
+  addLog('系统', `获得 ${goldReward} 金币`);
+  spawnFloatingText(scene, 'player', `+${goldReward} 金币`, '#ffdd44', 60, '18px');
+
+  // 必出药水
+  if (GameState.potions.length < GameState.MAX_POTIONS) {
+    const potion = rollPotionReward();
+    if (tryAddPotion(potion)) {
+      addLog('系统', `获得药水：${potion.name}`);
+    }
+  }
+
+  // 奖励选择
+  showPostBattleRewardChoice(scene, () => {
+    // 进入下一层
+    if (GameState.depthLevel < DEPTH_LEVELS.length - 1) {
+      playTransitionToNextLevel(scene, () => {
+        advanceLevel(scene);
+        GameState.nodeBattleCount = 0;
+        GameState.currentMapData = null; // 清空地图数据，下一层重新生成
+
+        // 进入第二层时固定获得基础遗物
+        if (GameState.depthLevel === 1 && !GameState.player.relics.some(r => r.id === RELICS.marsPowerCore.id)) {
+          GameState.player.addRelic(RELICS.marsPowerCore);
+          addLog('系统', `获得遗物：${RELICS.marsPowerCore.name} — ${RELICS.marsPowerCore.desc}`);
+        }
+
+        refreshUI(scene);
+        GameState.discardPile = GameState.discardPile.concat(GameState.hand);
+        GameState.hand = [];
+        GameState.drawPile.reshuffle(GameState.discardPile);
+        GameState.discardPile = [];
+        refreshUI(scene);
+        autoSave(); // 进入下一层时保存
+
+        scene.time.delayedCall(300, () => {
+          showMapSelectionPopup(scene, (node) => handleMapNodeSelected(scene, node));
+        });
+      });
+    }
+  });
+}
+
+/* ============================================================
+ * 商店系统
+ * ============================================================ */
+function showShopPopup(scene, onComplete) {
+  GameState.turnPhase = 'shop';
+
+  const overlay = scene.add.graphics();
+  overlay.fillStyle(0x000000, 0.9);
+  overlay.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
+
+  const popupW = Math.min(820, LAYOUT.W - 40);
+  const popupH = Math.min(560, LAYOUT.H - 40);
+  const popupX = (LAYOUT.W - popupW) / 2;
+  const popupY = (LAYOUT.H - popupH) / 2;
+
+  const popup = scene.add.graphics();
+  popup.fillStyle(0x1a1a0a, 0.97);
+  popup.fillRoundedRect(popupX, popupY, popupW, popupH, 18);
+  popup.lineStyle(3, 0xddaa44, 1);
+  popup.strokeRoundedRect(popupX, popupY, popupW, popupH, 18);
+  popup.fillStyle(0xddaa44, 0.9);
+  popup.fillRect(popupX + 30, popupY + 28, popupW - 60, 3);
+
+  const title = scene.add.text(LAYOUT.W / 2, popupY + 55, '$ 火星流浪商人 $', {
+    fontSize: '26px',
+    fontFamily: '"Courier New", monospace',
+    color: '#ffdd44',
+    fontStyle: 'bold',
+    stroke: '#000000',
+    strokeThickness: 4,
+  }).setOrigin(0.5);
+
+  // 金币显示
+  const goldDisplay = scene.add.text(LAYOUT.W / 2, popupY + 92, `持有金币：${GameState.gold}`, {
+    fontSize: '16px',
+    fontFamily: '"Courier New", monospace',
+    color: '#ffeeaa',
+    fontStyle: 'bold',
+  }).setOrigin(0.5);
+
+  const updateGoldDisplay = () => {
+    goldDisplay.setText(`持有金币：${GameState.gold}`);
+  };
+
+  // 生成商店库存
+  const shopCards = rollPostBattleRewards(3);
+  const shopRelicKeys = Object.keys(RELICS).filter(k =>
+    !GameState.player.relics.some(r => r.id === RELICS[k].id));
+  // 随机选2个遗物
+  const shopRelics = [];
+  for (let i = 0; i < 2 && shopRelicKeys.length > 0; i++) {
+    const idx = Math.floor(Math.random() * shopRelicKeys.length);
+    shopRelics.push(RELICS[shopRelicKeys[idx]]);
+    shopRelicKeys.splice(idx, 1);
+  }
+  const shopPotion = rollPotionReward();
+
+  // 价格
+  const cardPrice = 50;
+  const relicPrice = 120;
+  const potionPrice = 40;
+  const removePrice = 75;
+
+  // 购买状态
+  const purchased = { cards: [false, false, false], relics: [false, false], potion: false, removed: false };
+
+  const shopElements = [];
+
+  // === 第一行：3张卡牌 ===
+  const cardLabel = scene.add.text(popupX + 30, popupY + 130, '卡牌（50金币/张）', {
+    fontSize: '14px',
+    fontFamily: '"Courier New", monospace',
+    color: '#ccbb88',
+  });
+  shopElements.push(cardLabel);
+
+  const cardW = 130;
+  const cardH = 160;
+  const cardGap = 16;
+  const cardTotalW = 3 * cardW + 2 * cardGap;
+  const cardStartX = popupX + 30 + cardW / 2;
+  const cardY = popupY + 220;
+
+  for (let i = 0; i < shopCards.length; i++) {
+    const card = shopCards[i];
+    const cx = cardStartX + i * (cardW + cardGap);
+
+    const container = scene.add.container(cx, cardY);
+    const bg = scene.add.graphics();
+    const drawCardBg = (highlighted, bought) => {
+      bg.clear();
+      bg.fillStyle(bought ? 0x222222 : (highlighted ? 0x2a3a1a : 0x112211), 0.98);
+      bg.fillRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 10);
+      bg.lineStyle(highlighted ? 3 : 2, bought ? 0x444444 : (highlighted ? 0x88ff44 : 0xddaa44), bought ? 0.3 : 0.8);
+      bg.strokeRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 10);
+    };
+    drawCardBg(false, false);
+    container.add(bg);
+
+    const topBar = scene.add.graphics();
+    topBar.fillStyle(card.color, 0.8);
+    topBar.fillRoundedRect(-cardW / 2 + 6, -cardH / 2 + 6, cardW - 12, 20, { tl: 5, tr: 5, bl: 0, br: 0 });
+    container.add(topBar);
+
+    const nameText = scene.add.text(0, -cardH / 2 + 16, card.name, {
+      fontSize: '11px',
+      fontFamily: '"Courier New", monospace',
+      color: '#ffffff',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 2,
+    }).setOrigin(0.5);
+    container.add(nameText);
+
+    const costText = scene.add.text(0, 10, card.desc, {
+      fontSize: '10px',
+      fontFamily: '"Courier New", monospace',
+      color: '#ccccee',
+      align: 'center',
+      wordWrap: { width: cardW - 12 },
+      lineSpacing: 3,
+    }).setOrigin(0.5);
+    container.add(costText);
+
+    const priceText = scene.add.text(0, cardH / 2 - 18, `◆ ${cardPrice}`, {
+      fontSize: '13px',
+      fontFamily: '"Courier New", monospace',
+      color: '#ffdd44',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    container.add(priceText);
+
+    const hitZone = scene.add.rectangle(0, 0, cardW + 6, cardH + 6, 0xffffff, 0)
+      .setInteractive({ useHandCursor: true });
+    container.add(hitZone);
+
+    hitZone.on('pointerover', () => {
+      if (!purchased.cards[i]) {
+        scene.tweens.add({ targets: container, scaleX: 1.05, scaleY: 1.05, duration: 80 });
+        drawCardBg(true, false);
+      }
+    });
+    hitZone.on('pointerout', () => {
+      if (!purchased.cards[i]) {
+        scene.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 80 });
+        drawCardBg(false, false);
+      }
+    });
+    hitZone.on('pointerdown', () => {
+      if (purchased.cards[i]) return;
+      if (GameState.gold < cardPrice) {
+        spawnFloatingText(scene, 'player', '金币不足！', '#ff4444', 40, '16px');
+        return;
+      }
+      GameState.gold -= cardPrice;
+      GameState.drawPile.cards.push(card);
+      purchased.cards[i] = true;
+      addLog('商店', `购买卡牌：${card.name}（-${cardPrice}金币）`);
+      drawCardBg(false, true);
+      container.removeAllListeners();
+      scene.tweens.add({ targets: container, alpha: 0.4, duration: 200 });
+      updateGoldDisplay();
+      refreshUI(scene);
+    });
+
+    shopElements.push(container);
+  }
+
+  // === 第二行：遗物 + 药水 + 移除卡 ===
+  const itemY = popupY + 420;
+  const itemLabel = scene.add.text(popupX + 30, itemY - 50, '遗物 / 药水 / 服务', {
+    fontSize: '14px',
+    fontFamily: '"Courier New", monospace',
+    color: '#ccbb88',
+  });
+  shopElements.push(itemLabel);
+
+  // 遗物
+  for (let i = 0; i < shopRelics.length; i++) {
+    const relic = shopRelics[i];
+    const rx = popupX + 60 + i * 140;
+
+    const container = scene.add.container(rx, itemY);
+    const bg = scene.add.graphics();
+    const drawRelicBg = (highlighted, bought) => {
+      bg.clear();
+      bg.fillStyle(bought ? 0x222222 : (highlighted ? 0x3a2a1a : 0x2a1a0a), 0.98);
+      bg.fillRoundedRect(-60, -50, 120, 100, 10);
+      bg.lineStyle(highlighted ? 3 : 2, bought ? 0x444444 : (highlighted ? 0xffaa66 : 0xddaa44), bought ? 0.3 : 0.8);
+      bg.strokeRoundedRect(-60, -50, 120, 100, 10);
+    };
+    drawRelicBg(false, false);
+    container.add(bg);
+
+    const hex = scene.add.graphics();
+    drawHexagon(hex, 0, -20, 16, relic.color, 0.9);
+    container.add(hex);
+
+    const nameText = scene.add.text(0, 5, relic.name, {
+      fontSize: '11px',
+      fontFamily: '"Courier New", monospace',
+      color: '#ffffff',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 2,
+      align: 'center',
+      wordWrap: { width: 110 },
+    }).setOrigin(0.5);
+    container.add(nameText);
+
+    const priceText = scene.add.text(0, 35, `◆ ${relicPrice}`, {
+      fontSize: '12px',
+      fontFamily: '"Courier New", monospace',
+      color: '#ffdd44',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    container.add(priceText);
+
+    const hitZone = scene.add.rectangle(0, 0, 130, 110, 0xffffff, 0)
+      .setInteractive({ useHandCursor: true });
+    container.add(hitZone);
+
+    hitZone.on('pointerover', () => {
+      if (!purchased.relics[i]) {
+        scene.tweens.add({ targets: container, scaleX: 1.05, scaleY: 1.05, duration: 80 });
+        drawRelicBg(true, false);
+      }
+    });
+    hitZone.on('pointerout', () => {
+      if (!purchased.relics[i]) {
+        scene.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 80 });
+        drawRelicBg(false, false);
+      }
+    });
+    hitZone.on('pointerdown', () => {
+      if (purchased.relics[i]) return;
+      if (GameState.gold < relicPrice) {
+        spawnFloatingText(scene, 'player', '金币不足！', '#ff4444', 40, '16px');
+        return;
+      }
+      GameState.gold -= relicPrice;
+      GameState.player.addRelic(relic);
+      purchased.relics[i] = true;
+      addLog('商店', `购买遗物：${relic.name}（-${relicPrice}金币）`);
+      drawRelicBg(false, true);
+      container.removeAllListeners();
+      scene.tweens.add({ targets: container, alpha: 0.4, duration: 200 });
+      updateGoldDisplay();
+      refreshUI(scene);
+    });
+
+    shopElements.push(container);
+  }
+
+  // 药水
+  const potionContainerShop = scene.add.container(popupX + 60 + shopRelics.length * 140, itemY);
+  const potionBg = scene.add.graphics();
+  const drawPotionBg = (highlighted, bought) => {
+    potionBg.clear();
+    potionBg.fillStyle(bought ? 0x222222 : (highlighted ? 0x1a3a2a : 0x0a2a1a), 0.98);
+    potionBg.fillRoundedRect(-60, -50, 120, 100, 10);
+    potionBg.lineStyle(highlighted ? 3 : 2, bought ? 0x444444 : (highlighted ? 0x44ff88 : 0x44aa66), bought ? 0.3 : 0.8);
+    potionBg.strokeRoundedRect(-60, -50, 120, 100, 10);
+  };
+  drawPotionBg(false, false);
+  potionContainerShop.add(potionBg);
+
+  const potionBottle = scene.add.graphics();
+  potionBottle.fillStyle(shopPotion.color, 0.9);
+  potionBottle.fillRoundedRect(-12, -30, 24, 28, 4);
+  potionBottle.fillStyle(0x332222, 0.8);
+  potionBottle.fillRect(-4, -38, 8, 8);
+  potionContainerShop.add(potionBottle);
+
+  const potionName = scene.add.text(0, 5, shopPotion.name, {
+    fontSize: '11px',
+    fontFamily: '"Courier New", monospace',
+    color: '#ffffff',
+    fontStyle: 'bold',
+    stroke: '#000000',
+    strokeThickness: 2,
+    align: 'center',
+    wordWrap: { width: 110 },
+  }).setOrigin(0.5);
+  potionContainerShop.add(potionName);
+
+  const potionPriceText = scene.add.text(0, 35, `◆ ${potionPrice}`, {
+    fontSize: '12px',
+    fontFamily: '"Courier New", monospace',
+    color: '#ffdd44',
+    fontStyle: 'bold',
+  }).setOrigin(0.5);
+  potionContainerShop.add(potionPriceText);
+
+  const potionHit = scene.add.rectangle(0, 0, 130, 110, 0xffffff, 0)
+    .setInteractive({ useHandCursor: true });
+  potionContainerShop.add(potionHit);
+
+  potionHit.on('pointerover', () => {
+    if (!purchased.potion) {
+      scene.tweens.add({ targets: potionContainerShop, scaleX: 1.05, scaleY: 1.05, duration: 80 });
+      drawPotionBg(true, false);
+    }
+  });
+  potionHit.on('pointerout', () => {
+    if (!purchased.potion) {
+      scene.tweens.add({ targets: potionContainerShop, scaleX: 1, scaleY: 1, duration: 80 });
+      drawPotionBg(false, false);
+    }
+  });
+  potionHit.on('pointerdown', () => {
+    if (purchased.potion) return;
+    if (GameState.potions.length >= GameState.MAX_POTIONS) {
+      spawnFloatingText(scene, 'player', '药水槽已满！', '#ff4444', 40, '16px');
+      return;
+    }
+    if (GameState.gold < potionPrice) {
+      spawnFloatingText(scene, 'player', '金币不足！', '#ff4444', 40, '16px');
+      return;
+    }
+    GameState.gold -= potionPrice;
+    tryAddPotion(shopPotion);
+    purchased.potion = true;
+    addLog('商店', `购买药水：${shopPotion.name}（-${potionPrice}金币）`);
+    drawPotionBg(false, true);
+    potionContainerShop.removeAllListeners();
+    scene.tweens.add({ targets: potionContainerShop, alpha: 0.4, duration: 200 });
+    updateGoldDisplay();
+    refreshUI(scene);
+  });
+
+  shopElements.push(potionContainerShop);
+
+  // 移除卡服务
+  const removeContainer = scene.add.container(popupX + 60 + (shopRelics.length + 1) * 140, itemY);
+  const removeBg = scene.add.graphics();
+  const drawRemoveBg = (highlighted, used) => {
+    removeBg.clear();
+    removeBg.fillStyle(used ? 0x222222 : (highlighted ? 0x3a1a2a : 0x2a0a1a), 0.98);
+    removeBg.fillRoundedRect(-60, -50, 120, 100, 10);
+    removeBg.lineStyle(highlighted ? 3 : 2, used ? 0x444444 : (highlighted ? 0xff66aa : 0xaa3366), used ? 0.3 : 0.8);
+    removeBg.strokeRoundedRect(-60, -50, 120, 100, 10);
+  };
+  drawRemoveBg(false, false);
+  removeContainer.add(removeBg);
+
+  const removeIcon = scene.add.text(0, -20, '✕', {
+    fontSize: '24px',
+    fontFamily: '"Courier New", monospace',
+    color: '#ff66aa',
+    fontStyle: 'bold',
+  }).setOrigin(0.5);
+  removeContainer.add(removeIcon);
+
+  const removeName = scene.add.text(0, 5, '移除卡牌', {
+    fontSize: '11px',
+    fontFamily: '"Courier New", monospace',
+    color: '#ffffff',
+    fontStyle: 'bold',
+    stroke: '#000000',
+    strokeThickness: 2,
+  }).setOrigin(0.5);
+  removeContainer.add(removeName);
+
+  const removePriceText = scene.add.text(0, 35, `◆ ${removePrice}`, {
+    fontSize: '12px',
+    fontFamily: '"Courier New", monospace',
+    color: '#ffdd44',
+    fontStyle: 'bold',
+  }).setOrigin(0.5);
+  removeContainer.add(removePriceText);
+
+  const removeHit = scene.add.rectangle(0, 0, 130, 110, 0xffffff, 0)
+    .setInteractive({ useHandCursor: true });
+  removeContainer.add(removeHit);
+
+  removeHit.on('pointerover', () => {
+    if (!purchased.removed) {
+      scene.tweens.add({ targets: removeContainer, scaleX: 1.05, scaleY: 1.05, duration: 80 });
+      drawRemoveBg(true, false);
+    }
+  });
+  removeHit.on('pointerout', () => {
+    if (!purchased.removed) {
+      scene.tweens.add({ targets: removeContainer, scaleX: 1, scaleY: 1, duration: 80 });
+      drawRemoveBg(false, false);
+    }
+  });
+  removeHit.on('pointerdown', () => {
+    if (purchased.removed) return;
+    if (GameState.gold < removePrice) {
+      spawnFloatingText(scene, 'player', '金币不足！', '#ff4444', 40, '16px');
+      return;
+    }
+    // 弹出卡牌选择
+    showCardRemovePopup(scene, (removedCard) => {
+      if (removedCard) {
+        GameState.gold -= removePrice;
+        const idx = GameState.drawPile.cards.findIndex(c => c.uid === removedCard.uid);
+        if (idx >= 0) GameState.drawPile.cards.splice(idx, 1);
+        purchased.removed = true;
+        addLog('商店', `移除卡牌：${removedCard.name}（-${removePrice}金币）`);
+        drawRemoveBg(false, true);
+        removeContainer.removeAllListeners();
+        scene.tweens.add({ targets: removeContainer, alpha: 0.4, duration: 200 });
+        updateGoldDisplay();
+        refreshUI(scene);
+      }
+    });
+  });
+
+  shopElements.push(removeContainer);
+
+  // 离开按钮
+  const leaveBtnY = popupY + popupH - 40;
+  const leaveBtn = scene.add.container(LAYOUT.W / 2, leaveBtnY);
+  const leaveBg = scene.add.graphics();
+  leaveBg.fillStyle(0x442222, 1);
+  leaveBg.fillRoundedRect(-80, -18, 160, 36, 8);
+  leaveBg.lineStyle(2, 0xaa6644, 1);
+  leaveBg.strokeRoundedRect(-80, -18, 160, 36, 8);
+  leaveBtn.add(leaveBg);
+
+  const leaveText = scene.add.text(0, 0, '离开商店', {
+    fontSize: '15px',
+    fontFamily: '"Courier New", monospace',
+    color: '#ddccaa',
+    fontStyle: 'bold',
+  }).setOrigin(0.5);
+  leaveBtn.add(leaveText);
+
+  const leaveHit = scene.add.rectangle(0, 0, 160, 36, 0xffffff, 0)
+    .setInteractive({ useHandCursor: true });
+  leaveBtn.add(leaveHit);
+
+  leaveHit.on('pointerover', () => {
+    leaveBg.clear();
+    leaveBg.fillStyle(0x663333, 1);
+    leaveBg.fillRoundedRect(-80, -18, 160, 36, 8);
+    leaveBg.lineStyle(2, 0xff8866, 1);
+    leaveBg.strokeRoundedRect(-80, -18, 160, 36, 8);
+  });
+  leaveHit.on('pointerout', () => {
+    leaveBg.clear();
+    leaveBg.fillStyle(0x442222, 1);
+    leaveBg.fillRoundedRect(-80, -18, 160, 36, 8);
+    leaveBg.lineStyle(2, 0xaa6644, 1);
+    leaveBg.strokeRoundedRect(-80, -18, 160, 36, 8);
+  });
+  leaveHit.on('pointerdown', () => {
+    overlay.destroy();
+    popup.destroy();
+    title.destroy();
+    goldDisplay.destroy();
+    shopElements.forEach(e => { if (e.destroy) e.destroy(); });
+    onComplete();
+  });
+
+  refreshUI(scene);
+}
+
+/** 移除卡牌选择弹窗 */
+function showCardRemovePopup(scene, onSelect) {
+  const cards = GameState.drawPile.cards;
+  if (cards.length === 0) {
+    onSelect(null);
+    return;
+  }
+
+  const overlay = scene.add.graphics();
+  overlay.fillStyle(0x000000, 0.85);
+  overlay.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
+
+  const popupW = Math.min(760, LAYOUT.W - 40);
+  const popupH = Math.min(480, LAYOUT.H - 40);
+  const popupX = (LAYOUT.W - popupW) / 2;
+  const popupY = (LAYOUT.H - popupH) / 2;
+
+  const popup = scene.add.graphics();
+  popup.fillStyle(0x2a0a1a, 0.97);
+  popup.fillRoundedRect(popupX, popupY, popupW, popupH, 18);
+  popup.lineStyle(3, 0xff66aa, 1);
+  popup.strokeRoundedRect(popupX, popupY, popupW, popupH, 18);
+
+  const title = scene.add.text(LAYOUT.W / 2, popupY + 45, '✕ 选择要移除的卡牌 ✕', {
+    fontSize: '22px',
+    fontFamily: '"Courier New", monospace',
+    color: '#ff66aa',
+    fontStyle: 'bold',
+    stroke: '#000000',
+    strokeThickness: 4,
+  }).setOrigin(0.5);
+
+  const hint = scene.add.text(LAYOUT.W / 2, popupY + 80, '点击卡牌将其从牌组中永久移除', {
+    fontSize: '13px',
+    fontFamily: '"Courier New", monospace',
+    color: '#ddaabb',
+  }).setOrigin(0.5);
+
+  const cardW = isPortrait ? 120 : 130;
+  const cardH = 150;
+  const gap = 10;
+  const perRow = isPortrait ? 4 : 5;
+  const startY = popupY + 110 + cardH / 2;
+  const startX = popupX + 20 + cardW / 2;
+
+  const cardObjects = [];
+
+  for (let i = 0; i < cards.length; i++) {
+    const card = cards[i];
+    const row = Math.floor(i / perRow);
+    const col = i % perRow;
+    const cx = startX + col * (cardW + gap);
+    const cy = startY + row * (cardH + gap);
+
+    const container = scene.add.container(cx, cy);
+    const bg = scene.add.graphics();
+    bg.fillStyle(0x1a0a14, 0.98);
+    bg.fillRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 8);
+    bg.lineStyle(2, 0xaa3366, 0.7);
+    bg.strokeRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 8);
+    container.add(bg);
+
+    const topBar = scene.add.graphics();
+    topBar.fillStyle(card.color, 0.8);
+    topBar.fillRoundedRect(-cardW / 2 + 4, -cardH / 2 + 4, cardW - 8, 18, { tl: 4, tr: 4, bl: 0, br: 0 });
+    container.add(topBar);
+
+    const nameText = scene.add.text(0, -cardH / 2 + 14, card.name, {
+      fontSize: '10px',
+      fontFamily: '"Courier New", monospace',
+      color: '#ffffff',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 2,
+    }).setOrigin(0.5);
+    container.add(nameText);
+
+    const descText = scene.add.text(0, 10, card.desc, {
+      fontSize: '9px',
+      fontFamily: '"Courier New", monospace',
+      color: '#ccccee',
+      align: 'center',
+      wordWrap: { width: cardW - 8 },
+      lineSpacing: 2,
+    }).setOrigin(0.5);
+    container.add(descText);
+
+    const hitZone = scene.add.rectangle(0, 0, cardW + 4, cardH + 4, 0xffffff, 0)
+      .setInteractive({ useHandCursor: true });
+    container.add(hitZone);
+
+    hitZone.on('pointerover', () => {
+      scene.tweens.add({ targets: container, scaleX: 1.08, scaleY: 1.08, duration: 80 });
+    });
+    hitZone.on('pointerout', () => {
+      scene.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 80 });
+    });
+    hitZone.on('pointerdown', () => {
+      cardObjects.forEach(c => c.hitZone.disableInteractive());
+      scene.tweens.add({
+        targets: container,
+        scaleX: 0.5, scaleY: 0.5, alpha: 0,
+        duration: 200,
+        onComplete: () => {
+          overlay.destroy();
+          popup.destroy();
+          title.destroy();
+          hint.destroy();
+          cardObjects.forEach(c => c.container.destroy());
+          onSelect(card);
+        },
+      });
+    });
+
+    cardObjects.push({ container, hitZone });
+  }
+
+  // 取消按钮
+  const cancelBtn = scene.add.container(LAYOUT.W / 2, popupY + popupH - 40);
+  const cancelBg = scene.add.graphics();
+  cancelBg.fillStyle(0x333333, 1);
+  cancelBg.fillRoundedRect(-60, -16, 120, 32, 8);
+  cancelBg.lineStyle(2, 0x888888, 1);
+  cancelBg.strokeRoundedRect(-60, -16, 120, 32, 8);
+  cancelBtn.add(cancelBg);
+
+  const cancelText = scene.add.text(0, 0, '取消', {
+    fontSize: '14px',
+    fontFamily: '"Courier New", monospace',
+    color: '#cccccc',
+  }).setOrigin(0.5);
+  cancelBtn.add(cancelText);
+
+  const cancelHit = scene.add.rectangle(0, 0, 120, 32, 0xffffff, 0)
+    .setInteractive({ useHandCursor: true });
+  cancelBtn.add(cancelHit);
+
+  cancelHit.on('pointerdown', () => {
+    overlay.destroy();
+    popup.destroy();
+    title.destroy();
+    hint.destroy();
+    cardObjects.forEach(c => c.container.destroy());
+    cancelBtn.destroy();
+    onSelect(null);
+  });
+}
+
 /** 休息点场景 */
 function showRestScene(scene, healAmount, onComplete) {
   const overlay = scene.add.graphics();
   overlay.fillStyle(0x000000, 0.85);
-  overlay.fillRect(0, 0, W, H);
+  overlay.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
 
   const popupW = 500;
   const popupH = 280;
-  const popupX = (W - popupW) / 2;
-  const popupY = (H - popupH) / 2;
+  const popupX = (LAYOUT.W - popupW) / 2;
+  const popupY = (LAYOUT.H - popupH) / 2;
 
   const popup = scene.add.graphics();
   popup.fillStyle(0x0a2a1a, 0.97);
@@ -1713,7 +2780,7 @@ function showRestScene(scene, healAmount, onComplete) {
   popup.lineStyle(3, 0x44ff88, 1);
   popup.strokeRoundedRect(popupX, popupY, popupW, popupH, 18);
 
-  const title = scene.add.text(W / 2, popupY + 50, '♡ 休息营地 ♡', {
+  const title = scene.add.text(LAYOUT.W / 2, popupY + 50, '♡ 休息营地 ♡', {
     fontSize: '28px',
     fontFamily: '"Courier New", monospace',
     color: '#44ff88',
@@ -1722,7 +2789,7 @@ function showRestScene(scene, healAmount, onComplete) {
     strokeThickness: 4,
   }).setOrigin(0.5);
 
-  const msg = scene.add.text(W / 2, popupY + 110, `宇航员在火星洞穴中找到片刻安宁...\n恢复 ${healAmount} 点生命值`, {
+  const msg = scene.add.text(LAYOUT.W / 2, popupY + 110, `宇航员在火星洞穴中找到片刻安宁...\n恢复 ${healAmount} 点生命值`, {
     fontSize: '16px',
     fontFamily: '"Courier New", monospace',
     color: '#aaffcc',
@@ -1730,7 +2797,7 @@ function showRestScene(scene, healAmount, onComplete) {
     lineSpacing: 6,
   }).setOrigin(0.5);
 
-  const continueBtn = scene.add.container(W / 2, popupY + 220);
+  const continueBtn = scene.add.container(LAYOUT.W / 2, popupY + 220);
   const btnBg = scene.add.graphics();
   btnBg.fillStyle(0x224433, 1);
   btnBg.fillRoundedRect(-80, -20, 160, 40, 8);
@@ -1807,12 +2874,12 @@ function triggerRandomEvent(scene, onComplete) {
 
   const overlay = scene.add.graphics();
   overlay.fillStyle(0x000000, 0.9);
-  overlay.fillRect(0, 0, W, H);
+  overlay.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
 
   const popupW = 600;
   const popupH = 360;
-  const popupX = (W - popupW) / 2;
-  const popupY = (H - popupH) / 2;
+  const popupX = (LAYOUT.W - popupW) / 2;
+  const popupY = (LAYOUT.H - popupH) / 2;
 
   const popup = scene.add.graphics();
   popup.fillStyle(0x1a1a0a, 0.97);
@@ -1820,7 +2887,7 @@ function triggerRandomEvent(scene, onComplete) {
   popup.lineStyle(3, 0xddaa22, 1);
   popup.strokeRoundedRect(popupX, popupY, popupW, popupH, 18);
 
-  const title = scene.add.text(W / 2, popupY + 45, `? ${event.name} ?`, {
+  const title = scene.add.text(LAYOUT.W / 2, popupY + 45, `? ${event.name} ?`, {
     fontSize: '26px',
     fontFamily: '"Courier New", monospace',
     color: '#ddaa22',
@@ -1829,7 +2896,7 @@ function triggerRandomEvent(scene, onComplete) {
     strokeThickness: 4,
   }).setOrigin(0.5);
 
-  const desc = scene.add.text(W / 2, popupY + 100, event.desc, {
+  const desc = scene.add.text(LAYOUT.W / 2, popupY + 100, event.desc, {
     fontSize: '15px',
     fontFamily: '"Courier New", monospace',
     color: '#eeddcc',
@@ -1844,7 +2911,7 @@ function triggerRandomEvent(scene, onComplete) {
   const btnH = 42;
   const btnGap = 16;
   const totalBtnW = event.options.length * btnW + (event.options.length - 1) * btnGap;
-  const btnStartX = (W - totalBtnW) / 2 + btnW / 2;
+  const btnStartX = (LAYOUT.W - totalBtnW) / 2 + btnW / 2;
 
   const btnContainers = [];
 
@@ -2004,16 +3071,16 @@ function startBossSequence(scene) {
 
   const overlay = scene.add.graphics();
   overlay.fillStyle(0x000000, 0);
-  overlay.fillRect(0, 0, W, H);
+  overlay.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
 
-  const warningText = scene.add.text(W / 2, H / 2 - 20, '⚠ 检测到巨大生命信号...', {
+  const warningText = scene.add.text(LAYOUT.W / 2, LAYOUT.H / 2 - 20, '⚠ 检测到巨大生命信号...', {
     fontSize: '26px',
     fontFamily: '"Courier New", monospace',
     color: '#ff6633',
     fontStyle: 'bold',
   }).setOrigin(0.5).setAlpha(0);
 
-  const bossText = scene.add.text(W / 2, H / 2 + 25, '火星吞噬者 正在苏醒！', {
+  const bossText = scene.add.text(LAYOUT.W / 2, LAYOUT.H / 2 + 25, '火星吞噬者 正在苏醒！', {
     fontSize: '22px',
     fontFamily: '"Courier New", monospace',
     color: '#ff4422',
@@ -2030,7 +3097,7 @@ function startBossSequence(scene) {
       flashCount++;
       const flash = scene.add.graphics();
       flash.fillStyle(0xff0000, flashCount % 2 === 1 ? 0.1 : 0);
-      flash.fillRect(0, 0, W, H);
+      flash.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
       scene.time.delayedCall(100, () => flash.destroy());
 
       if (flashCount >= 6) {
@@ -2056,6 +3123,351 @@ function startBossSequence(scene) {
 }
 
 /* ============================================================
+ * 战后奖励选择面板（获得卡牌 / 升级卡牌 / 获得金币）
+ * ============================================================ */
+function showPostBattleRewardChoice(scene, onComplete) {
+  GameState.turnPhase = 'reward';
+
+  const overlay = scene.add.graphics();
+  overlay.fillStyle(0x000000, 0.88);
+  overlay.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
+
+  const popupW = Math.min(680, LAYOUT.W - 40);
+  const popupH = 320;
+  const popupX = (LAYOUT.W - popupW) / 2;
+  const popupY = (LAYOUT.H - popupH) / 2;
+
+  const popup = scene.add.graphics();
+  popup.fillStyle(0x0a1a2a, 0.97);
+  popup.fillRoundedRect(popupX, popupY, popupW, popupH, 18);
+  popup.lineStyle(3, 0x33ccff, 1);
+  popup.strokeRoundedRect(popupX, popupY, popupW, popupH, 18);
+  popup.fillStyle(0x33ccff, 0.9);
+  popup.fillRect(popupX + 30, popupY + 28, popupW - 60, 3);
+
+  const title = scene.add.text(LAYOUT.W / 2, popupY + 55, '◆ 战后奖励 ◆', {
+    fontSize: '24px',
+    fontFamily: '"Courier New", monospace',
+    color: '#66ffff',
+    fontStyle: 'bold',
+    stroke: '#000000',
+    strokeThickness: 4,
+  }).setOrigin(0.5);
+
+  const hint = scene.add.text(LAYOUT.W / 2, popupY + 90, '选择一项奖励', {
+    fontSize: '14px',
+    fontFamily: '"Courier New", monospace',
+    color: '#88ccdd',
+  }).setOrigin(0.5);
+
+  // 三个选项
+  const options = [
+    { key: 'card',    label: '获得卡牌', desc: '从 3 张卡中选 1 张加入牌组', color: 0x33ccff, icon: '▤' },
+    { key: 'upgrade', label: '升级卡牌', desc: '选择牌组中 1 张卡进行升级', color: 0x88ff44, icon: '↑' },
+    { key: 'gold',    label: '获得金币', desc: '获得 25 金币（用于商店）', color: 0xffdd44, icon: '◆' },
+  ];
+
+  // 判断升级选项是否可用（需要有可升级的卡）
+  const upgradableCards = GameState.drawPile.cards.filter(c => !c.upgraded && UPGRADES[c.id]);
+  if (upgradableCards.length === 0) {
+    options[1].desc = '（无可升级卡牌）';
+    options[1].disabled = true;
+  }
+
+  const btnW = Math.min(200, (popupW - 60) / 3 - 10);
+  const btnH = 140;
+  const btnGap = 16;
+  const totalBtnW = options.length * btnW + (options.length - 1) * btnGap;
+  const btnStartX = (LAYOUT.W - totalBtnW) / 2 + btnW / 2;
+  const btnY = popupY + 180;
+
+  const btnObjects = [];
+
+  for (let i = 0; i < options.length; i++) {
+    const opt = options[i];
+    const bx = btnStartX + i * (btnW + btnGap);
+
+    const container = scene.add.container(bx, btnY);
+    const bg = scene.add.graphics();
+    const drawBg = (highlighted) => {
+      bg.clear();
+      bg.fillStyle(highlighted ? 0x1a3a5a : 0x112233, 0.98);
+      bg.fillRoundedRect(-btnW / 2, -btnH / 2, btnW, btnH, 12);
+      bg.lineStyle(highlighted ? 3 : 2, highlighted ? 0x66ffff : opt.color, highlighted ? 1 : (opt.disabled ? 0.3 : 0.8));
+      bg.strokeRoundedRect(-btnW / 2, -btnH / 2, btnW, btnH, 12);
+    };
+    drawBg(false);
+    container.add(bg);
+
+    // 顶部颜色条
+    const topBar = scene.add.graphics();
+    topBar.fillStyle(opt.color, opt.disabled ? 0.3 : 0.85);
+    topBar.fillRoundedRect(-btnW / 2 + 8, -btnH / 2 + 8, btnW - 16, 28, { tl: 6, tr: 6, bl: 0, br: 0 });
+    container.add(topBar);
+
+    const iconText = scene.add.text(0, -btnH / 2 + 22, opt.icon, {
+      fontSize: '20px',
+      fontFamily: '"Courier New", monospace',
+      color: '#ffffff',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    container.add(iconText);
+
+    const nameText = scene.add.text(0, -btnH / 2 + 55, opt.label, {
+      fontSize: '16px',
+      fontFamily: '"Courier New", monospace',
+      color: opt.disabled ? '#666666' : '#ffffff',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 3,
+    }).setOrigin(0.5);
+    container.add(nameText);
+
+    const descText = scene.add.text(0, 10, opt.desc, {
+      fontSize: '11px',
+      fontFamily: '"Courier New", monospace',
+      color: opt.disabled ? '#555555' : '#cceeff',
+      align: 'center',
+      wordWrap: { width: btnW - 16 },
+      lineSpacing: 4,
+    }).setOrigin(0.5);
+    container.add(descText);
+
+    const hitZone = scene.add.rectangle(0, 0, btnW + 10, btnH + 10, 0xffffff, 0)
+      .setInteractive({ useHandCursor: !opt.disabled });
+    container.add(hitZone);
+
+    if (!opt.disabled) {
+      hitZone.on('pointerover', () => {
+        scene.tweens.add({ targets: container, scaleX: 1.05, scaleY: 1.05, duration: 80 });
+        drawBg(true);
+      });
+      hitZone.on('pointerout', () => {
+        scene.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 80 });
+        drawBg(false);
+      });
+      hitZone.on('pointerdown', () => {
+        btnObjects.forEach(b => b.hitZone.disableInteractive());
+        scene.tweens.add({
+          targets: container,
+          scaleX: 1.2, scaleY: 1.2, alpha: 0,
+          duration: 200,
+          ease: 'Back.easeIn',
+          onComplete: () => {
+            cleanup();
+            handleRewardChoice(scene, opt.key, onComplete);
+          },
+        });
+      });
+    }
+
+    btnObjects.push({ container, hitZone, bg });
+  }
+
+  function cleanup() {
+    overlay.destroy();
+    popup.destroy();
+    title.destroy();
+    hint.destroy();
+    btnObjects.forEach(b => b.container.destroy());
+  }
+}
+
+/** 处理奖励选择结果 */
+function handleRewardChoice(scene, choice, onComplete) {
+  if (choice === 'card') {
+    // 弹出三选一卡牌
+    const rewards = rollPostBattleRewards(3);
+    showCardRewardPopup(scene, rewards, (selectedCard) => {
+      GameState.drawPile.cards.push(selectedCard);
+      addLog('系统', `获得奖励卡牌：${selectedCard.name}`);
+      refreshUI(scene);
+      onComplete();
+    });
+  } else if (choice === 'upgrade') {
+    // 弹出升级卡牌选择
+    showCardUpgradePopup(scene, onComplete);
+  } else if (choice === 'gold') {
+    GameState.gold += 25;
+    addLog('系统', `获得 25 金币`);
+    spawnFloatingText(scene, 'player', `+25 金币`, '#ffdd44', 60, '18px');
+    refreshUI(scene);
+    onComplete();
+  }
+}
+
+/** 卡牌升级弹窗 */
+function showCardUpgradePopup(scene, onComplete) {
+  GameState.turnPhase = 'reward';
+
+  const upgradableCards = GameState.drawPile.cards.filter(c => !c.upgraded && UPGRADES[c.id]);
+  if (upgradableCards.length === 0) {
+    addLog('系统', '无可升级卡牌');
+    onComplete();
+    return;
+  }
+
+  const overlay = scene.add.graphics();
+  overlay.fillStyle(0x000000, 0.88);
+  overlay.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
+
+  const popupW = Math.min(760, LAYOUT.W - 40);
+  const popupH = 420;
+  const popupX = (LAYOUT.W - popupW) / 2;
+  const popupY = (LAYOUT.H - popupH) / 2;
+
+  const popup = scene.add.graphics();
+  popup.fillStyle(0x0a2a1a, 0.97);
+  popup.fillRoundedRect(popupX, popupY, popupW, popupH, 18);
+  popup.lineStyle(3, 0x88ff44, 1);
+  popup.strokeRoundedRect(popupX, popupY, popupW, popupH, 18);
+  popup.fillStyle(0x88ff44, 0.9);
+  popup.fillRect(popupX + 30, popupY + 28, popupW - 60, 3);
+
+  const title = scene.add.text(LAYOUT.W / 2, popupY + 55, '◆ 升级卡牌 ◆', {
+    fontSize: '24px',
+    fontFamily: '"Courier New", monospace',
+    color: '#88ff44',
+    fontStyle: 'bold',
+    stroke: '#000000',
+    strokeThickness: 4,
+  }).setOrigin(0.5);
+
+  const hint = scene.add.text(LAYOUT.W / 2, popupY + 90, '选择一张卡牌进行升级', {
+    fontSize: '14px',
+    fontFamily: '"Courier New", monospace',
+    color: '#aaddaa',
+  }).setOrigin(0.5);
+
+  // 卡牌网格：最多展示所有可升级卡
+  const cardW = isPortrait ? 140 : 155;
+  const cardH = 180;
+  const gap = 12;
+  const perRow = isPortrait ? 3 : 4;
+  const rows = Math.ceil(upgradableCards.length / perRow);
+  const totalW = Math.min(perRow, upgradableCards.length) * cardW + (Math.min(perRow, upgradableCards.length) - 1) * gap;
+  const startX = (LAYOUT.W - totalW) / 2 + cardW / 2;
+  const startY = popupY + 120 + cardH / 2;
+
+  const cardObjects = [];
+
+  for (let i = 0; i < upgradableCards.length; i++) {
+    const card = upgradableCards[i];
+    const row = Math.floor(i / perRow);
+    const col = i % perRow;
+    const x = startX + col * (cardW + gap);
+    const y = startY + row * (cardH + gap);
+
+    const container = scene.add.container(x, y);
+    const upgrade = UPGRADES[card.id];
+
+    const bg = scene.add.graphics();
+    const drawBg = (highlighted) => {
+      bg.clear();
+      bg.fillStyle(highlighted ? 0x1a4a2a : 0x112a18, 0.98);
+      bg.fillRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 10);
+      bg.lineStyle(highlighted ? 3 : 2, highlighted ? 0xaaff66 : 0x88ff44, highlighted ? 1 : 0.8);
+      bg.strokeRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 10);
+    };
+    drawBg(false);
+    container.add(bg);
+
+    // 顶部颜色条
+    const topBar = scene.add.graphics();
+    topBar.fillStyle(card.color, 0.8);
+    topBar.fillRoundedRect(-cardW / 2 + 6, -cardH / 2 + 6, cardW - 12, 22, { tl: 5, tr: 5, bl: 0, br: 0 });
+    container.add(topBar);
+
+    const nameText = scene.add.text(0, -cardH / 2 + 17, card.name, {
+      fontSize: '12px',
+      fontFamily: '"Courier New", monospace',
+      color: '#ffffff',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 2,
+    }).setOrigin(0.5);
+    container.add(nameText);
+
+    // 当前效果
+    const currentDesc = scene.add.text(0, -10, card.desc, {
+      fontSize: '10px',
+      fontFamily: '"Courier New", monospace',
+      color: '#aaaabb',
+      align: 'center',
+      wordWrap: { width: cardW - 12 },
+      lineSpacing: 3,
+    }).setOrigin(0.5);
+    container.add(currentDesc);
+
+    // 升级箭头
+    const arrow = scene.add.text(0, 35, '↓ 升级后 ↓', {
+      fontSize: '10px',
+      fontFamily: '"Courier New", monospace',
+      color: '#88ff44',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    container.add(arrow);
+
+    // 升级后效果
+    const upgradedDesc = scene.add.text(0, 60, upgrade.desc, {
+      fontSize: '10px',
+      fontFamily: '"Courier New", monospace',
+      color: '#88ff44',
+      align: 'center',
+      wordWrap: { width: cardW - 12 },
+      lineSpacing: 3,
+    }).setOrigin(0.5);
+    container.add(upgradedDesc);
+
+    const hitZone = scene.add.rectangle(0, 0, cardW + 8, cardH + 8, 0xffffff, 0)
+      .setInteractive({ useHandCursor: true });
+    container.add(hitZone);
+
+    hitZone.on('pointerover', () => {
+      scene.tweens.add({ targets: container, scaleX: 1.06, scaleY: 1.06, duration: 80 });
+      drawBg(true);
+    });
+    hitZone.on('pointerout', () => {
+      scene.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 80 });
+      drawBg(false);
+    });
+    hitZone.on('pointerdown', () => {
+      cardObjects.forEach(c => c.hitZone.disableInteractive());
+      // 执行升级
+      const upgradedCard = upgradeCard(card);
+      // 替换牌组中的卡牌（保留原位置）
+      const idx = GameState.drawPile.cards.findIndex(c => c.uid === card.uid);
+      if (idx >= 0) {
+        GameState.drawPile.cards[idx] = upgradedCard;
+      }
+      addLog('系统', `${card.name} 升级为 ${upgradedCard.name}`);
+      refreshUI(scene);
+
+      scene.tweens.add({
+        targets: container,
+        scaleX: 1.3, scaleY: 1.3, alpha: 0,
+        duration: 250,
+        ease: 'Back.easeIn',
+        onComplete: () => {
+          cleanup();
+          onComplete();
+        },
+      });
+    });
+
+    cardObjects.push({ container, hitZone, bg });
+  }
+
+  function cleanup() {
+    overlay.destroy();
+    popup.destroy();
+    title.destroy();
+    hint.destroy();
+    cardObjects.forEach(c => c.container.destroy());
+  }
+}
+
+/* ============================================================
  * 战后三选一卡牌奖励弹窗
  * ============================================================ */
 function showCardRewardPopup(scene, rewards, onSelect) {
@@ -2063,12 +3475,12 @@ function showCardRewardPopup(scene, rewards, onSelect) {
 
   const overlay = scene.add.graphics();
   overlay.fillStyle(0x000000, 0.85);
-  overlay.fillRect(0, 0, W, H);
+  overlay.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
 
-  const popupW = 760;
+  const popupW = Math.min(760, LAYOUT.W - 40);
   const popupH = 380;
-  const popupX = (W - popupW) / 2;
-  const popupY = (H - popupH) / 2;
+  const popupX = (LAYOUT.W - popupW) / 2;
+  const popupY = (LAYOUT.H - popupH) / 2;
 
   const popup = scene.add.graphics();
   // 深蓝科技背景
@@ -2084,7 +3496,7 @@ function showCardRewardPopup(scene, rewards, onSelect) {
   popup.fillStyle(0x33ccff, 0.9);
   popup.fillRect(popupX + 30, popupY + 28, popupW - 60, 3);
 
-  const title = scene.add.text(W / 2, popupY + 55, '◆ 选择一张奖励卡牌 ◆', {
+  const title = scene.add.text(LAYOUT.W / 2, popupY + 55, '◆ 选择一张奖励卡牌 ◆', {
     fontSize: '26px',
     fontFamily: '"Courier New", monospace',
     color: '#66ffff',
@@ -2093,17 +3505,17 @@ function showCardRewardPopup(scene, rewards, onSelect) {
     strokeThickness: 4,
   }).setOrigin(0.5);
 
-  const hint = scene.add.text(W / 2, popupY + 92, '点击或触摸卡牌，将其加入抽牌堆', {
+  const hint = scene.add.text(LAYOUT.W / 2, popupY + 92, '点击或触摸卡牌，将其加入抽牌堆', {
     fontSize: '14px',
     fontFamily: '"Courier New", monospace',
     color: '#88ccdd',
   }).setOrigin(0.5);
 
-  const cardW = 190;
+  const cardW = isPortrait ? 170 : 190;
   const cardH = 220;
-  const gap = 28;
+  const gap = isPortrait ? 20 : 28;
   const totalW = rewards.length * cardW + (rewards.length - 1) * gap;
-  const startX = (W - totalW) / 2 + cardW / 2;
+  const startX = (LAYOUT.W - totalW) / 2 + cardW / 2;
   const cardY = popupY + 210;
 
   const rewardObjects = [];
@@ -2587,19 +3999,35 @@ function handleEnemyDefeated(scene) {
     return;
   }
 
-  // 地图战斗胜利后，增加战斗计数并检查进度
+  // 小 Boss 战胜利
+  if (GameState.isMiniBossBattle) {
+    GameState.isMiniBossBattle = false;
+    handleMiniBossDefeated(scene);
+    return;
+  }
+
+  // 地图战斗胜利后，增加战斗计数
   GameState.nodeBattleCount++;
   addLog('系统', `战斗完成 (${GameState.nodeBattleCount}/${GameState.battlesPerLayer})`);
 
-  // 战后奖励
-  const rewards = rollPostBattleRewards(3);
-  showCardRewardPopup(scene, rewards, (selectedCard) => {
-    GameState.drawPile.cards.push(selectedCard);
-    addLog('系统', `获得奖励卡牌：${selectedCard.name}`);
-    refreshUI(scene);
+  // 战斗金币奖励
+  const goldReward = GameState.enemy.isElite ? 35 : 15;
+  GameState.gold += goldReward;
+  addLog('系统', `获得 ${goldReward} 金币`);
+  spawnFloatingText(scene, 'player', `+${goldReward} 金币`, '#ffdd44', 60, '18px');
 
-    // 50% 概率获得药水
-    if (Math.random() < 0.5 && GameState.potions.length < GameState.MAX_POTIONS) {
+  // 精英战斗必出药水
+  if (GameState.enemy.isElite && GameState.potions.length < GameState.MAX_POTIONS) {
+    const potion = rollPotionReward();
+    if (tryAddPotion(potion)) {
+      addLog('系统', `精英奖励：获得药水 ${potion.name}`);
+    }
+  }
+
+  // 战后奖励选择（卡牌/升级/金币）
+  showPostBattleRewardChoice(scene, () => {
+    // 50% 概率获得药水（非精英战斗）
+    if (!GameState.enemy.isElite && Math.random() < 0.5 && GameState.potions.length < GameState.MAX_POTIONS) {
       const potion = rollPotionReward();
       if (tryAddPotion(potion)) {
         addLog('系统', `获得药水：${potion.name} — ${potion.desc}`);
@@ -2608,43 +4036,8 @@ function handleEnemyDefeated(scene) {
       }
     }
 
-    // 检查是否进入下一层
-    if (GameState.nodeBattleCount >= GameState.battlesPerLayer) {
-      if (GameState.depthLevel < DEPTH_LEVELS.length - 1) {
-        // 进入下一层
-        playTransitionToNextLevel(scene, () => {
-          advanceLevel(scene);
-          GameState.nodeBattleCount = 0;
-
-          // 进入第二层时固定获得基础遗物：火星动力核心
-          if (GameState.depthLevel === 1 && !GameState.player.relics.some(r => r.id === RELICS.marsPowerCore.id)) {
-            GameState.player.addRelic(RELICS.marsPowerCore);
-            addLog('系统', `获得遗物：${RELICS.marsPowerCore.name} — ${RELICS.marsPowerCore.desc}`);
-          }
-
-          refreshUI(scene);
-          GameState.discardPile = GameState.discardPile.concat(GameState.hand);
-          GameState.hand = [];
-          GameState.drawPile.reshuffle(GameState.discardPile);
-          GameState.discardPile = [];
-          refreshUI(scene);
-
-          // 显示地图选择
-          scene.time.delayedCall(300, () => {
-            showMapSelectionPopup(scene, (node) => handleMapNodeSelected(scene, node));
-          });
-        });
-      } else {
-        // 最后一层完成，迎战Boss
-        startBossSequence(scene);
-      }
-    } else {
-      // 继续本层探索
-      refreshUI(scene);
-      scene.time.delayedCall(400, () => {
-        showMapSelectionPopup(scene, (node) => handleMapNodeSelected(scene, node));
-      });
-    }
+    // 继续地图探索
+    showNextMapOrProgress(scene);
   });
 }
 
@@ -2735,8 +4128,9 @@ function executeEnemyTurn(scene) {
  * ============================================================ */
 function gameOver(scene, result) {
   GameState.turnPhase = 'gameOver';
+  deleteSave(); // 游戏结束删除存档
 
-  const W2 = W, H2 = H;
+  const W2 = LAYOUT.W, H2 = LAYOUT.H;
   const overlay = scene.add.graphics();
 
   if (result === 'victory' && GameState.isFinalBossDefeated) {
@@ -2901,4 +4295,122 @@ function gameOver(scene, result) {
  * ============================================================ */
 function update() {
   // 战斗场景暂无每帧逻辑
+}
+
+/* ============================================================
+ * 存档系统（localStorage）
+ * ============================================================ */
+const SAVE_KEY = 'forcing_mars_save';
+
+/** 保存游戏进度 */
+function saveGame() {
+  try {
+    const player = GameState.player;
+    const saveData = {
+      timestamp: Date.now(),
+      player: {
+        hp: player.hp,
+        baseMaxHp: player.baseMaxHp,
+        baseBattery: player.baseBattery,
+        shield: player.shield,
+        relics: player.relics.map(r => r.id),
+        statusEffects: { ...player.statusEffects },
+      },
+      deck: GameState.drawPile.cards.map(c => ({ id: c.id, upgraded: c.upgraded || false, uid: c.uid })),
+      hand: GameState.hand.map(c => ({ id: c.id, upgraded: c.upgraded || false, uid: c.uid })),
+      discardPile: GameState.discardPile.map(c => ({ id: c.id, upgraded: c.upgraded || false, uid: c.uid })),
+      potions: GameState.potions.map(p => p.id),
+      gold: GameState.gold,
+      depthLevel: GameState.depthLevel,
+      nodeBattleCount: GameState.nodeBattleCount,
+      isFinalBossDefeated: GameState.isFinalBossDefeated,
+      isMiniBossBattle: GameState.isMiniBossBattle,
+      currentMapData: GameState.currentMapData,
+      CARD_UID_COUNTER: CARD_UID_COUNTER,
+    };
+    localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
+    return true;
+  } catch (e) {
+    console.error('保存失败：', e);
+    return false;
+  }
+}
+
+/** 加载游戏进度，返回是否成功 */
+function loadGame() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+
+    // 恢复玩家
+    const player = new Player();
+    player.hp = data.player.hp;
+    player.baseMaxHp = data.player.baseMaxHp;
+    player.baseBattery = data.player.baseBattery;
+    player.shield = data.player.shield;
+    player.statusEffects = data.player.statusEffects || player.statusEffects;
+    // 恢复遗物
+    for (const relicId of data.player.relics) {
+      const relic = RELICS[relicId];
+      if (relic) player.relics.push(relic);
+    }
+
+    // 恢复卡组
+    const restoreCard = (cardData) => {
+      const def = CARD_DEFS[cardData.id];
+      if (!def) return null;
+      let card = createCardInstance(def);
+      card.uid = cardData.uid;
+      if (cardData.upgraded) {
+        card = upgradeCard(card) || card;
+      }
+      return card;
+    };
+
+    const deckCards = data.deck.map(restoreCard).filter(c => c);
+    const handCards = data.hand.map(restoreCard).filter(c => c);
+    const discardCards = data.discardPile.map(restoreCard).filter(c => c);
+
+    // 恢复药水
+    const potions = data.potions.map(pid => POTION_DEFS[pid]).filter(p => p);
+
+    // 恢复 UID 计数器
+    CARD_UID_COUNTER = data.CARD_UID_COUNTER || 0;
+
+    // 写入 GameState
+    GameState.player = player;
+    GameState.drawPile = new DrawPile(deckCards);
+    GameState.hand = handCards;
+    GameState.discardPile = discardCards;
+    GameState.potions = potions;
+    GameState.gold = data.gold;
+    GameState.depthLevel = data.depthLevel;
+    GameState.nodeBattleCount = data.nodeBattleCount;
+    GameState.isFinalBossDefeated = data.isFinalBossDefeated;
+    GameState.isMiniBossBattle = data.isMiniBossBattle;
+    GameState.currentMapData = data.currentMapData;
+
+    return true;
+  } catch (e) {
+    console.error('加载存档失败：', e);
+    return false;
+  }
+}
+
+/** 删除存档 */
+function deleteSave() {
+  localStorage.removeItem(SAVE_KEY);
+}
+
+/** 检查是否有存档 */
+function hasSave() {
+  return localStorage.getItem(SAVE_KEY) !== null;
+}
+
+/** 自动保存（在关键节点调用） */
+function autoSave() {
+  if (GameState.turnPhase !== 'gameOver') {
+    saveGame();
+  }
 }

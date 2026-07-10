@@ -461,6 +461,29 @@ const ENEMY_CATALOG = {
       { type: 'burn', stacks: 2 },
     ],
   },
+  /* ---------- 小 Boss（每层结尾遭遇） ---------- */
+  sandTyrant: {
+    key: 'sandTyrant',
+    name: '沙暴暴君',
+    sprite: 'enemy_dune_stalker',
+    maxHp: 60,
+    pattern: ENEMY_PATTERN.ALTERNATING,
+    actions: [
+      { type: 'shield', value: 10 },
+      { type: 'damage', value: 12, statusEffect: { type: 'vulnerable', stacks: 2 } },
+      { type: 'damage', value: 8 },
+    ],
+  },
+  crystalTitan: {
+    key: 'crystalTitan',
+    name: '晶化巨像',
+    sprite: 'enemy_crystal_parasite',
+    maxHp: 75,
+    pattern: ENEMY_PATTERN.RAMPING,
+    baseDamage: 6,
+    damageIncrement: 2,
+    statusEffect: { type: 'poison', stacks: 2 },
+  },
 };
 
 /* ============================================================
@@ -691,6 +714,7 @@ const DEPTH_LEVELS = [
     label: '地表 — 0m',
     color: 0xdd7733,
     bgColor: 0x1a0808,
+    miniBoss: 'sandTyrant',
   },
   {
     key: 'shallow',
@@ -699,6 +723,7 @@ const DEPTH_LEVELS = [
     label: '地下浅层 — 500m',
     color: 0xcc4422,
     bgColor: 0x1a0a06,
+    miniBoss: 'crystalTitan',
   },
   {
     key: 'core',
@@ -707,6 +732,7 @@ const DEPTH_LEVELS = [
     label: '地核深处 — 2000m',
     color: 0xcc2211,
     bgColor: 0x1a0404,
+    miniBoss: 'marsDevourer',
   },
 ];
 
