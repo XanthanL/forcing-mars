@@ -1173,13 +1173,15 @@ function tryAddPotion(potion) {
 }
 
 /** 玩家受击震屏 */
-function shakePlayerUI(scene) {
+function shakePlayerUI(scene, intensity = 'medium') {
   if (!playerContainer) return;
+  const amp = intensity === 'heavy' ? 10 : (intensity === 'light' ? 4 : 7);
+  const repeatN = intensity === 'heavy' ? 5 : 3;
   scene.tweens.add({
     targets: playerContainer,
-    x: { from: -5, to: 5 },
+    x: { from: -amp, to: amp },
     yoyo: true,
-    repeat: 3,
+    repeat: repeatN,
     duration: 40,
     ease: 'Power1',
     onComplete: () => {
@@ -1440,15 +1442,17 @@ function drawIntentIcon(scene, cx, cy, enemy) {
 }
 
 /** 敌人受击震屏 */
-function shakeEnemyUI(scene) {
+function shakeEnemyUI(scene, intensity = 'medium') {
   if (!enemyContainer) return;
   const origX = 0;
   const origY = 0;
+  const amp = intensity === 'heavy' ? 10 : (intensity === 'light' ? 4 : 7);
+  const repeatN = intensity === 'heavy' ? 5 : 3;
   scene.tweens.add({
     targets: enemyContainer,
-    x: { from: -6, to: 6 },
+    x: { from: -amp, to: amp },
     yoyo: true,
-    repeat: 3,
+    repeat: repeatN,
     duration: 40,
     ease: 'Power1',
     onComplete: () => {
@@ -1509,14 +1513,321 @@ function refreshUI(scene) {
 /* ============================================================
  * 数值飘字特效
  * ============================================================ */
+/* ============================================================
+ * 特效系统（粒子 / 闪光 / 横幅 / 震动）
+ * 贴合科幻火星风格：霓虹色 + 能量粒子 + 扫描线
+ * ============================================================ */
+
+/**
+ * 命中粒子爆发：攻击命中目标时迸发能量粒子
+ * @param {Phaser.Scene} scene
+ * @param {number} x 粒子中心 X
+ * @param {number} y 粒子中心 Y
+ * @param {number} color 粒子颜色（0xRRGGBB）
+ * @param {number} count 粒子数量
+ * @param {object} opts { speed, size, spread, life }
+ */
+function spawnHitParticles(scene, x, y, color = 0xff4422, count = 14, opts = {}) {
+  const speed = opts.speed || 180;
+  const size = opts.size || 4;
+  const life = opts.life || 500;
+  const spread = opts.spread || Math.PI * 2;
+
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * spread - spread / 2 + (opts.angle || -Math.PI / 2);
+    const v = speed * (0.5 + Math.random() * 0.5);
+    const vx = Math.cos(angle) * v;
+    const vy = Math.sin(angle) * v;
+
+    const p = scene.add.graphics();
+    p.fillStyle(color, 1);
+    const ps = size * (0.6 + Math.random() * 0.6);
+    p.fillCircle(0, 0, ps);
+    p.lineStyle(1, 0xffffff, 0.5);
+    p.strokeCircle(0, 0, ps);
+    p.setPosition(x, y);
+    p.setDepth(500);
+
+    const lifeJitter = life * (0.7 + Math.random() * 0.6);
+    scene.tweens.add({
+      targets: p,
+      x: x + vx * (lifeJitter / 1000),
+      y: y + vy * (lifeJitter / 1000),
+      alpha: 0,
+      scaleX: 0.2,
+      scaleY: 0.2,
+      duration: lifeJitter,
+      ease: 'Cubic.easeOut',
+      onComplete: () => p.destroy(),
+    });
+  }
+
+  // 中心闪光环
+  const flashRing = scene.add.graphics();
+  flashRing.lineStyle(2, color, 0.9);
+  flashRing.strokeCircle(x, y, 6);
+  flashRing.setDepth(501);
+  scene.tweens.add({
+    targets: flashRing,
+    alpha: 0,
+    scaleX: 4,
+    scaleY: 4,
+    duration: 350,
+    ease: 'Cubic.easeOut',
+    onComplete: () => flashRing.destroy(),
+  });
+}
+
+/**
+ * 治疗上升粒子：恢复生命时绿色光粒向上飘
+ */
+function spawnHealParticles(scene, x, y, color = 0x33ff77, count = 10) {
+  for (let i = 0; i < count; i++) {
+    const p = scene.add.graphics();
+    p.fillStyle(color, 0.9);
+    p.fillCircle(0, 0, 3 + Math.random() * 2);
+    p.lineStyle(1, 0xffffff, 0.6);
+    p.strokeCircle(0, 0, 3);
+    const offX = (Math.random() - 0.5) * 60;
+    p.setPosition(x + offX, y + 20);
+    p.setDepth(500);
+
+    scene.tweens.add({
+      targets: p,
+      y: y - 60 - Math.random() * 30,
+      x: x + offX + (Math.random() - 0.5) * 20,
+      alpha: 0,
+      scaleX: 0.3,
+      scaleY: 0.3,
+      duration: 800 + Math.random() * 400,
+      ease: 'Sine.easeOut',
+      onComplete: () => p.destroy(),
+    });
+  }
+}
+
+/**
+ * 护盾获得粒子：蓝色能量环上升
+ */
+function spawnShieldParticles(scene, x, y, color = 0x44aaff, count = 12) {
+  // 环形粒子
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2;
+    const r = 50;
+    const p = scene.add.graphics();
+    p.fillStyle(color, 0.9);
+    p.fillCircle(0, 0, 3);
+    p.lineStyle(1, 0xffffff, 0.5);
+    p.strokeCircle(0, 0, 3);
+    p.setPosition(x + Math.cos(angle) * r, y + Math.sin(angle) * r);
+    p.setDepth(500);
+
+    scene.tweens.add({
+      targets: p,
+      x: x,
+      y: y,
+      alpha: 0,
+      scaleX: 0.2,
+      scaleY: 0.2,
+      duration: 600,
+      ease: 'Cubic.easeIn',
+      onComplete: () => p.destroy(),
+    });
+  }
+  // 外环描边
+  const ring = scene.add.graphics();
+  ring.lineStyle(2, color, 0.8);
+  ring.strokeCircle(x, y, 55);
+  ring.setDepth(501);
+  scene.tweens.add({
+    targets: ring,
+    alpha: 0,
+    scaleX: 0.6,
+    scaleY: 0.6,
+    duration: 500,
+    ease: 'Cubic.easeOut',
+    onComplete: () => ring.destroy(),
+  });
+}
+
+/**
+ * 实体闪光：精灵被命中/治疗时短暂染色闪烁
+ * @param {Phaser.GameObjects.Image} sprite
+ * @param {number} color 0xffffff 或 0xff0000 等
+ * @param {number} duration
+ */
+function flashEntity(scene, sprite, color = 0xffffff, duration = 120) {
+  if (!sprite) return;
+  sprite.setTint(color);
+  scene.tweens.add({
+    targets: sprite,
+    duration: duration,
+    onComplete: () => {
+      if (sprite) sprite.clearTint();
+    },
+  });
+  // 闪白后立即回色（更明显的打击感）
+  scene.time.delayedCall(duration * 0.4, () => {
+    if (sprite) sprite.setTint(0xffeeee);
+  });
+}
+
+/**
+ * 分级屏幕震动
+ * @param {Phaser.Scene} scene
+ * @param {string} level 'light' | 'medium' | 'heavy'
+ */
+function shakeScreen(scene, level = 'light') {
+  const config = {
+    light:  { duration: 120, intensity: 0.004 },
+    medium: { duration: 280, intensity: 0.012 },
+    heavy:  { duration: 500, intensity: 0.022 },
+  };
+  const c = config[level] || config.light;
+  scene.cameras.main.shake(c.duration, c.intensity);
+}
+
+/**
+ * 回合切换横幅：从屏幕中央滑入，停留后滑出
+ * @param {Phaser.Scene} scene
+ * @param {string} text 横幅文字
+ * @param {number} color 0xRRGGBB
+ */
+function showTurnBanner(scene, text, color = 0x33ff66) {
+  const W = LAYOUT.W;
+  const H = LAYOUT.H;
+  const bannerH = 56;
+
+  // 背景条
+  const bg = scene.add.graphics();
+  bg.fillStyle(0x000000, 0.75);
+  bg.fillRect(0, H / 2 - bannerH / 2, W, bannerH);
+  // 顶部底部霓虹线
+  bg.lineStyle(2, color, 0.9);
+  bg.lineBetween(0, H / 2 - bannerH / 2, W, H / 2 - bannerH / 2);
+  bg.lineBetween(0, H / 2 + bannerH / 2, W, H / 2 + bannerH / 2);
+  bg.setAlpha(0);
+  bg.setDepth(900);
+
+  // 文字
+  const txt = scene.add.text(W / 2, H / 2, text, {
+    fontSize: '30px',
+    fontFamily: '"Courier New", monospace',
+    color: '#' + color.toString(16).padStart(6, '0'),
+    fontStyle: 'bold',
+    stroke: '#000000',
+    strokeThickness: 5,
+  }).setOrigin(0.5).setAlpha(0).setDepth(901);
+
+  // 滑入
+  scene.tweens.add({
+    targets: [bg, txt],
+    alpha: 1,
+    duration: 200,
+    ease: 'Power2',
+  });
+  // 停留后滑出
+  scene.time.delayedCall(750, () => {
+    scene.tweens.add({
+      targets: [bg, txt],
+      alpha: 0,
+      duration: 300,
+      ease: 'Power2',
+      onComplete: () => {
+        bg.destroy();
+        txt.destroy();
+      },
+    });
+  });
+}
+
+/**
+ * 屏幕短暂闪光（红色受伤 / 蓝色护盾 / 绿色治疗 / 金色获得）
+ */
+function flashScreen(scene, color = 0xff0000, alpha = 0.25, duration = 150) {
+  const flash = scene.add.graphics();
+  flash.fillStyle(color, alpha);
+  flash.fillRect(0, 0, LAYOUT.W, LAYOUT.H);
+  flash.setDepth(800);
+  scene.tweens.add({
+    targets: flash,
+    alpha: 0,
+    duration: duration,
+    ease: 'Linear',
+    onComplete: () => flash.destroy(),
+  });
+}
+
+/**
+ * 敌人击败爆炸特效
+ */
+function spawnDefeatExplosion(scene, x, y, color = 0xff6622) {
+  // 中心大闪光
+  const bigFlash = scene.add.graphics();
+  bigFlash.fillStyle(color, 0.9);
+  bigFlash.fillCircle(x, y, 20);
+  bigFlash.setDepth(500);
+  scene.tweens.add({
+    targets: bigFlash,
+    alpha: 0,
+    scaleX: 6,
+    scaleY: 6,
+    duration: 500,
+    ease: 'Cubic.easeOut',
+    onComplete: () => bigFlash.destroy(),
+  });
+
+  // 多色粒子爆发
+  const colors = [color, 0xffaa00, 0xffffff, 0xff4400];
+  for (let i = 0; i < 30; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const v = 120 + Math.random() * 200;
+    const p = scene.add.graphics();
+    const c = colors[Math.floor(Math.random() * colors.length)];
+    p.fillStyle(c, 1);
+    p.fillCircle(0, 0, 3 + Math.random() * 3);
+    p.setPosition(x, y);
+    p.setDepth(501);
+
+    scene.tweens.add({
+      targets: p,
+      x: x + Math.cos(angle) * v,
+      y: y + Math.sin(angle) * v,
+      alpha: 0,
+      scaleX: 0.2,
+      scaleY: 0.2,
+      duration: 600 + Math.random() * 400,
+      ease: 'Cubic.easeOut',
+      onComplete: () => p.destroy(),
+    });
+  }
+  // 外环扩散
+  const ring = scene.add.graphics();
+  ring.lineStyle(3, color, 1);
+  ring.strokeCircle(x, y, 20);
+  ring.setDepth(501);
+  scene.tweens.add({
+    targets: ring,
+    alpha: 0,
+    scaleX: 8,
+    scaleY: 8,
+    duration: 600,
+    ease: 'Cubic.easeOut',
+    onComplete: () => ring.destroy(),
+  });
+}
+
 function spawnFloatingText(scene, target, text, color, offsetY, fontSize = '20px') {
   let targetX, targetY;
 
   if (target === 'player') {
     targetX = LAYOUT.playerX;
-    targetY = 110 + (offsetY || 0);
-  } else {
+    targetY = LAYOUT.playerY + (offsetY || 0);
+  } else if (target === 'enemy') {
     targetX = LAYOUT.enemyX;
+    targetY = LAYOUT.enemyY + (offsetY || 0);
+  } else {
+    targetX = LAYOUT.playerX;
     targetY = 110 + (offsetY || 0);
   }
 
@@ -1527,13 +1838,30 @@ function spawnFloatingText(scene, target, text, color, offsetY, fontSize = '20px
     fontStyle: 'bold',
     stroke: '#000000',
     strokeThickness: 4,
-  }).setOrigin(0.5).setAlpha(1);
+  }).setOrigin(0.5).setAlpha(1).setDepth(600);
+
+  // 入场缩放弹跳
+  ft.setScale(0.4);
+  scene.tweens.add({
+    targets: ft,
+    scale: 1.15,
+    duration: 120,
+    ease: 'Back.easeOut',
+    onComplete: () => {
+      scene.tweens.add({
+        targets: ft,
+        scale: 1,
+        duration: 100,
+      });
+    },
+  });
 
   scene.tweens.add({
     targets: ft,
     y: targetY - 80,
     alpha: 0,
     duration: 1100,
+    delay: 200,
     ease: 'Power2',
     onComplete: () => ft.destroy(),
   });
@@ -4484,6 +4812,9 @@ function startPlayerTurn(scene) {
 
   GameState.turnPhase = 'playerTurn';
 
+  // 回合切换横幅
+  showTurnBanner(scene, '▸ 你的回合 ◂', 0x33ff66);
+
   // BGM 切换：进入战斗场景时播放战斗音乐
   if (GameState.depthLevel === 0) {
     BGM.switch(scene, 'bgm-battle', true);
@@ -4501,7 +4832,10 @@ function startPlayerTurn(scene) {
   if (playerBurnDmg > 0) {
     addLog('系统', `状态效果：玩家受到 ${playerBurnDmg} 点伤害（灼烧/中毒）`);
     spawnFloatingText(scene, 'player', `-${playerBurnDmg} 状态`, '#ff6600', -40, '14px');
-    shakePlayerUI(scene);
+    const statusColor = GameState.player.getStatus('burn') > 0 ? 0xff6600 : 0x66ff44;
+    spawnHitParticles(scene, LAYOUT.playerX, LAYOUT.playerY, statusColor, 8, { speed: 100, size: 3 });
+    flashEntity(scene, playerSprite, statusColor);
+    shakePlayerUI(scene, 'light');
   }
 
   // 遗物触发：赤铁护符（回合开始获得3护盾）
@@ -4632,7 +4966,11 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
       addLog(card.name, `对 ${GameState.enemy.name} 造成 ${totalDamage} 点伤害（最大生命值${Math.floor(card.percentDamage * 100)}%）` +
         (totalAbsorbed > 0 ? ` (护盾吸收 ${totalAbsorbed})` : ''));
       spawnFloatingText(scene, 'enemy', `-${totalDamage} HP`, '#9966ff', 0, '22px');
-      shakeEnemyUI(scene);
+      spawnHitParticles(scene, LAYOUT.enemyX, LAYOUT.enemyY, 0x9966ff, 20, { speed: 240 });
+      flashEntity(scene, enemySprite, 0x9966ff);
+      shakeEnemyUI(scene, 'heavy');
+      shakeScreen(scene, 'medium');
+      flashScreen(scene, 0x9966ff, 0.12);
     } else {
       for (let i = 0; i < hits; i++) {
         // 每段攻击：基础伤害 + 力量加成
@@ -4662,7 +5000,16 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
       addLog(card.name, `对 ${GameState.enemy.name} 造成 ${totalDamage} 点伤害${hitDesc}` +
         (totalAbsorbed > 0 ? ` (护盾吸收 ${totalAbsorbed})` : ''));
       spawnFloatingText(scene, 'enemy', `-${totalDamage} HP${hitDesc}`, '#ff4422');
-      shakeEnemyUI(scene);
+      // 命中粒子：多段攻击粒子更多
+      const particleCount = hits > 1 ? 8 + hits * 2 : 14;
+      const hitColor = card.pierce ? 0xff2266 : (hits > 1 ? 0xff44aa : 0xff4422);
+      spawnHitParticles(scene, LAYOUT.enemyX, LAYOUT.enemyY, hitColor, particleCount, { speed: 200 });
+      flashEntity(scene, enemySprite, 0xffffff);
+      // 多段攻击每次都震动，单段震动一次
+      shakeEnemyUI(scene, hits > 1 ? 'light' : 'medium');
+      if (totalDamage >= 15 || hits > 1) {
+        shakeScreen(scene, 'light');
+      }
 
       // 单段攻击也附带状态效果（非多段的情况）
       if (hits === 1 && card.statusEffect) {
@@ -4682,6 +5029,7 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
       GameState.player.hp += actualHeal;
       addLog(card.name, `吸血恢复 ${actualHeal} 点生命`);
       spawnFloatingText(scene, 'player', `+${actualHeal} 吸血`, '#cc3344', -20, '16px');
+      spawnHealParticles(scene, LAYOUT.playerX, LAYOUT.playerY, 0xcc3344, 8);
     }
 
     // 消耗力量层数
@@ -4696,14 +5044,21 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
       GameState.player.hp = Math.max(0, GameState.player.hp - card.selfDamage);
       addLog(card.name, `失去 ${card.selfDamage} 点生命`);
       spawnFloatingText(scene, 'player', `-${card.selfDamage} HP`, '#ff4444', -20);
+      spawnHitParticles(scene, LAYOUT.playerX, LAYOUT.playerY, 0xff3300, 12, { speed: 160 });
+      flashEntity(scene, playerSprite, 0xff0000);
+      shakePlayerUI(scene, 'medium');
+      flashScreen(scene, 0xff0000, 0.2);
     }
 
     // 检查 Boss 阶段切换
     if (GameState.enemy.isAlive && GameState.enemy.checkPhaseTransition()) {
       addLog('系统', `⚠ ${GameState.enemy.name} 进入狂暴状态！⚠`);
       spawnFloatingText(scene, 'enemy', '狂暴化！', '#ff00ff', -50, '24px');
-      scene.cameras.main.shake(400, 0.015);
-      scene.cameras.main.flash(200, 255, 0, 100);
+      shakeScreen(scene, 'heavy');
+      flashScreen(scene, 0xff00ff, 0.35, 300);
+      // Boss 狂暴粒子爆发
+      spawnHitParticles(scene, LAYOUT.enemyX, LAYOUT.enemyY, 0xff00ff, 30, { speed: 280 });
+      flashEntity(scene, enemySprite, 0xff00ff);
     }
   } else if (card.type === 'shield') {
     let shieldAmount = card.value;
@@ -4716,6 +5071,8 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
     GameState.player.addShield(shieldAmount);
     addLog(card.name, `获得 ${shieldAmount} 点护盾`);
     spawnFloatingText(scene, 'player', `+${shieldAmount} 护盾`, '#ffaa44');
+    spawnShieldParticles(scene, LAYOUT.playerX, LAYOUT.playerY, 0x44aaff, 12);
+    flashEntity(scene, playerSprite, 0x44aaff);
 
     // 获得反伤层数
     if (card.gainThorns) {
@@ -4731,6 +5088,7 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
       GameState.player.hp = Math.min(GameState.player.maxHp, GameState.player.hp + healAmount);
       addLog(card.name, `恢复 ${healAmount} 点生命`);
       spawnFloatingText(scene, 'player', `+${healAmount} HP`, '#33ff77', -20);
+      spawnHealParticles(scene, LAYOUT.playerX, LAYOUT.playerY, 0x33ff77, 10);
     }
   } else if (card.type === 'special') {
     // 应急过载应急阀：获得电量 + 本回合受伤加成
@@ -4821,6 +5179,24 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
 function handleEnemyDefeated(scene) {
   addLog('系统', `✦ ${GameState.enemy.name} 已被击败！`);
 
+  // 敌人击败爆炸特效
+  const isBoss = GameState.isFinalBossDefeated || GameState.enemy.isElite;
+  const explosionColor = GameState.enemy.isElite ? 0xaa22aa : 0xff6622;
+  spawnDefeatExplosion(scene, LAYOUT.enemyX, LAYOUT.enemyY, explosionColor);
+  shakeScreen(scene, isBoss ? 'heavy' : 'medium');
+  flashScreen(scene, explosionColor, 0.3, 250);
+  if (enemySprite) {
+    flashEntity(scene, enemySprite, 0xffffff, 200);
+    scene.tweens.add({
+      targets: enemySprite,
+      alpha: 0,
+      scaleX: 1.5,
+      scaleY: 1.5,
+      duration: 500,
+      ease: 'Cubic.easeOut',
+    });
+  }
+
   // 结局统计埋点
   GameState.endingStats.battlesWon++;
   if (GameState.enemy.isElite) GameState.endingStats.elitesDefeated++;
@@ -4896,6 +5272,7 @@ function handleEnemyDefeated(scene) {
 function endPlayerTurn(scene) {
   GameState.turnPhase = 'enemyTurn';
   addLog('系统', `--- 敌人回合 ---`);
+  showTurnBanner(scene, '⚠ 敌人回合 ⚠', 0xff4422);
 
   addLog('系统', `${GameState.hand.length} 张手牌进入弃牌堆`);
   GameState.discardPile = GameState.discardPile.concat(GameState.hand);
@@ -4926,7 +5303,10 @@ function executeEnemyTurn(scene) {
   if (enemyStatusDmg > 0) {
     addLog('系统', `状态效果：${GameState.enemy.name} 受到 ${enemyStatusDmg} 点伤害（灼烧/中毒）`);
     spawnFloatingText(scene, 'enemy', `-${enemyStatusDmg} 状态`, '#ff6600', -40, '14px');
-    shakeEnemyUI(scene);
+    // 状态伤害粒子（灼烧橙红色，中毒绿色）
+    const statusColor = GameState.enemy.getStatus('burn') > 0 ? 0xff6600 : 0x66ff44;
+    spawnHitParticles(scene, LAYOUT.enemyX, LAYOUT.enemyY, statusColor, 8, { speed: 100, size: 3 });
+    shakeEnemyUI(scene, 'light');
   }
 
   // 敌人可能因状态效果死亡
@@ -4943,20 +5323,34 @@ function executeEnemyTurn(scene) {
     addLog(GameState.enemy.name, result.desc);
     spawnFloatingText(scene, 'player', `-${result.value} HP`, '#ff2211', 0,
       result.type === 'chargedAttack' ? '38px' : '20px');
-    shakePlayerUI(scene);
-    if (result.type === 'chargedAttack') {
-      scene.cameras.main.shake(500, 0.025);
+    // 敌人攻击粒子：红色命中玩家
+    const isCharged = result.type === 'chargedAttack';
+    spawnHitParticles(scene, LAYOUT.playerX, LAYOUT.playerY, 0xff2211,
+      isCharged ? 24 : 12, { speed: isCharged ? 260 : 180 });
+    flashEntity(scene, playerSprite, 0xff0000);
+    shakePlayerUI(scene, isCharged ? 'heavy' : 'medium');
+    if (isCharged) {
+      shakeScreen(scene, 'heavy');
+      flashScreen(scene, 0xff0000, 0.35, 250);
+    } else if (result.value >= 12) {
+      shakeScreen(scene, 'light');
+      flashScreen(scene, 0xff0000, 0.15);
     }
     // 反伤效果显示
     if (result.thornsDamage > 0) {
       spawnFloatingText(scene, 'enemy', `-${result.thornsDamage} 反伤`, '#88aa44', -30, '16px');
-      shakeEnemyUI(scene);
+      spawnHitParticles(scene, LAYOUT.enemyX, LAYOUT.enemyY, 0x88aa44, 10, { speed: 150 });
+      shakeEnemyUI(scene, 'light');
     }
   } else if (result.type === 'shield') {
     addLog(GameState.enemy.name, result.desc);
     spawnFloatingText(scene, 'enemy', `+${result.value} 护盾`, '#ffaa44');
+    spawnShieldParticles(scene, LAYOUT.enemyX, LAYOUT.enemyY, 0xffaa00, 10);
   } else if (result.type === 'charge') {
     addLog(GameState.enemy.name, result.desc);
+    // 蓄力特效：敌人身上聚集能量
+    spawnHitParticles(scene, LAYOUT.enemyX, LAYOUT.enemyY, 0xff4400, 16, { speed: 80, size: 5 });
+    flashEntity(scene, enemySprite, 0xffaa00);
   }
 
   refreshUI(scene);
