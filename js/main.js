@@ -1127,9 +1127,11 @@ function usePotion(scene, index) {
 
   } else if (eff.type === 'battery') {
     const value = isDouble ? eff.value * 2 : eff.value;
-    GameState.player.battery += value;
-    addLog('药水', `${potion.name}：获得 ${value} 点电量${isDouble ? '（遗物翻倍）' : ''}`);
-    spawnFloatingText(scene, 'player', `+${value} 电量`, '#ffdd00', 40, '22px');
+    const beforeBattery = GameState.player.battery;
+    GameState.player.battery = Math.min(GameState.player.maxBattery, GameState.player.battery + value);
+    const actualGain = GameState.player.battery - beforeBattery;
+    addLog('药水', `${potion.name}：获得 ${actualGain} 点电量${isDouble ? '（遗物翻倍）' : ''}`);
+    spawnFloatingText(scene, 'player', `+${actualGain} 电量`, '#ffdd00', 40, '22px');
 
   } else if (eff.type === 'shield') {
     const value = isDouble ? eff.value * 2 : eff.value;
@@ -5114,10 +5116,12 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
   } else if (card.type === 'special') {
     // 应急过载应急阀：获得电量 + 本回合受伤加成
     if (card.id === 'emergencyOverloadValve') {
-      GameState.player.battery += card.gainBattery;
+      const beforeBattery = GameState.player.battery;
+      GameState.player.battery = Math.min(GameState.player.maxBattery, GameState.player.battery + card.gainBattery);
+      const actualGain = GameState.player.battery - beforeBattery;
       GameState.player.damageTakenBonus = (GameState.player.damageTakenBonus || 0) + card.damageTakenBonus;
-      addLog(card.name, `获得 ${card.gainBattery} 点电量，本回合受伤 +${card.damageTakenBonus}`);
-      spawnFloatingText(scene, 'player', `+${card.gainBattery} 电量`, '#ffdd00');
+      addLog(card.name, `获得 ${actualGain} 点电量，本回合受伤 +${card.damageTakenBonus}`);
+      spawnFloatingText(scene, 'player', `+${actualGain} 电量`, '#ffdd00');
     }
 
     // 灼烧翻倍：将敌人灼烧层数翻倍
@@ -5179,9 +5183,11 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
 
     // 获得电量
     if (card.gainBattery && card.id !== 'emergencyOverloadValve') {
-      GameState.player.battery += card.gainBattery;
-      addLog(card.name, `获得 ${card.gainBattery} 点电量`);
-      spawnFloatingText(scene, 'player', `+${card.gainBattery} 电量`, '#ffdd00');
+      const beforeBattery = GameState.player.battery;
+      GameState.player.battery = Math.min(GameState.player.maxBattery, GameState.player.battery + card.gainBattery);
+      const actualGain = GameState.player.battery - beforeBattery;
+      addLog(card.name, `获得 ${actualGain} 点电量`);
+      spawnFloatingText(scene, 'player', `+${actualGain} 电量`, '#ffdd00');
     }
   }
 
