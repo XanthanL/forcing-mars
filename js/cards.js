@@ -198,6 +198,7 @@ const CARD_DEFS = {
     color: 0xff44ff,
     rarity: CARD_RARITY.RARE,
     statusEffect: { type: 'strength', stacks: 2 },
+    selfTarget: true,
     drawCards: 1,
   },
   overclockOverload: {
@@ -210,6 +211,7 @@ const CARD_DEFS = {
     color: 0xff22cc,
     rarity: CARD_RARITY.RARE,
     statusEffect: { type: 'strength', stacks: 3 },
+    selfTarget: true,
     selfDamage: 6,
   },
 

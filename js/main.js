@@ -3269,12 +3269,19 @@ function showShopPopup(scene, onComplete) {
     leaveBg.lineStyle(2, 0xaa6644, 1);
     leaveBg.strokeRoundedRect(-80, -18, 160, 36, 8);
   });
+  shopElements.push(leaveBtn);
+
   leaveHit.on('pointerdown', () => {
+    // 停止所有商店相关的 tween
+    scene.tweens.killTweensOf(shopElements);
+    // 销毁所有元素
+    shopElements.forEach(e => {
+      if (e && e.destroy) e.destroy();
+    });
     overlay.destroy();
     popup.destroy();
     title.destroy();
     goldDisplay.destroy();
-    shopElements.forEach(e => { if (e.destroy) e.destroy(); });
     onComplete();
   });
 
@@ -4972,94 +4979,108 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
       shakeScreen(scene, 'medium');
       flashScreen(scene, 0x9966ff, 0.12);
     } else {
-      for (let i = 0; i < hits; i++) {
-        // 每段攻击：基础伤害 + 力量加成
-        let dmgPerHit = baseDamagePerHit + strengthBonus;
+      const hitDesc = hits > 1 ? `（${hits}段）` : '';
+      const hitColor = card.pierce ? 0xff2266 : (hits > 1 ? 0xff44aa : 0xff4422);
 
-        // 穿透护盾：直接扣血
-        if (card.pierce) {
-          GameState.enemy.hp = Math.max(0, GameState.enemy.hp - dmgPerHit);
-          totalDamage += dmgPerHit;
-          totalAbsorbed += 0;
-        } else {
-          const result = GameState.enemy.takeDamage(dmgPerHit);
-          totalDamage += result.total;
-          totalAbsorbed += result.absorbed;
+      // 多段攻击：每段独立扣血、独立特效、错开时间
+      for (let i = 0; i < hits; i++) {
+        const delay = i * 150;
+        scene.time.delayedCall(delay, () => {
+          // 每段攻击：基础伤害 + 力量加成
+          let dmgPerHit = baseDamagePerHit + strengthBonus;
+
+          // 穿透护盾：直接扣血
+          if (card.pierce) {
+            GameState.enemy.hp = Math.max(0, GameState.enemy.hp - dmgPerHit);
+            totalDamage += dmgPerHit;
+          } else {
+            const result = GameState.enemy.takeDamage(dmgPerHit);
+            totalDamage += result.total;
+            totalAbsorbed += result.absorbed;
+          }
+
+          // 每段独立飘字（垂直位置错开）
+          spawnFloatingText(scene, 'enemy', `-${dmgPerHit}`, '#ff4422', -i * 28, '18px');
+          // 每段独立粒子（位置微偏）
+          const offsetX = (Math.random() - 0.5) * 30;
+          const offsetY = (Math.random() - 0.5) * 30;
+          spawnHitParticles(scene, LAYOUT.enemyX + offsetX, LAYOUT.enemyY + offsetY, hitColor, 8, { speed: 180 });
+          flashEntity(scene, enemySprite, 0xffffff);
+          shakeEnemyUI(scene, 'light');
+          refreshUI(scene);
+        });
+      }
+
+      // 最后一段后：总日志、总震屏、状态效果
+      scene.time.delayedCall(hits * 150 + 80, () => {
+        addLog(card.name, `对 ${GameState.enemy.name} 造成 ${totalDamage} 点伤害${hitDesc}` +
+          (totalAbsorbed > 0 ? ` (护盾吸收 ${totalAbsorbed})` : ''));
+        spawnFloatingText(scene, 'enemy', `总计 -${totalDamage} HP${hitDesc}`, '#ff2211', -hits * 28 - 30, '22px');
+        spawnHitParticles(scene, LAYOUT.enemyX, LAYOUT.enemyY, hitColor, 10 + hits * 3, { speed: 220 });
+        shakeEnemyUI(scene, hits > 1 ? 'medium' : 'medium');
+        if (totalDamage >= 15 || hits > 1) {
+          shakeScreen(scene, hits > 1 ? 'medium' : 'light');
         }
 
-        // 每段攻击附带状态效果
+        // 多段攻击的状态效果只在最后施加一次
         if (card.statusEffect) {
           const effects = Array.isArray(card.statusEffect) ? card.statusEffect : [card.statusEffect];
           for (const eff of effects) {
             GameState.enemy.addStatus(eff.type, eff.stacks);
           }
+          const statusDesc = describeStatusEffect(card.statusEffect);
+          if (statusDesc) {
+            addLog(card.name, `施加${statusDesc}`);
+            spawnFloatingText(scene, 'enemy', statusDesc, '#ffaa00', -60, '14px');
+          }
         }
+      });
+    }
+
+    // 多段攻击完成后处理吸血 / 自伤 / 力量消耗 / Boss 阶段切换
+    scene.time.delayedCall(hits * 150 + 80, () => {
+      // 吸血效果：恢复等于造成的伤害
+      if (card.lifesteal) {
+        const healAmount = GameState.player.relics.some(r => r.id === RELICS.marsAncientRune.id)
+          ? totalDamage * 2 : totalDamage;
+        const actualHeal = Math.min(healAmount, GameState.player.maxHp - GameState.player.hp);
+        GameState.player.hp += actualHeal;
+        addLog(card.name, `吸血恢复 ${actualHeal} 点生命`);
+        spawnFloatingText(scene, 'player', `+${actualHeal} 吸血`, '#cc3344', -20, '16px');
+        spawnHealParticles(scene, LAYOUT.playerX, LAYOUT.playerY, 0xcc3344, 8);
       }
 
-      const hitDesc = hits > 1 ? `（${hits}段）` : '';
-      addLog(card.name, `对 ${GameState.enemy.name} 造成 ${totalDamage} 点伤害${hitDesc}` +
-        (totalAbsorbed > 0 ? ` (护盾吸收 ${totalAbsorbed})` : ''));
-      spawnFloatingText(scene, 'enemy', `-${totalDamage} HP${hitDesc}`, '#ff4422');
-      // 命中粒子：多段攻击粒子更多
-      const particleCount = hits > 1 ? 8 + hits * 2 : 14;
-      const hitColor = card.pierce ? 0xff2266 : (hits > 1 ? 0xff44aa : 0xff4422);
-      spawnHitParticles(scene, LAYOUT.enemyX, LAYOUT.enemyY, hitColor, particleCount, { speed: 200 });
-      flashEntity(scene, enemySprite, 0xffffff);
-      // 多段攻击每次都震动，单段震动一次
-      shakeEnemyUI(scene, hits > 1 ? 'light' : 'medium');
-      if (totalDamage >= 15 || hits > 1) {
-        shakeScreen(scene, 'light');
+      // 消耗力量层数
+      if (card.consumeStrength) {
+        const consumed = Math.min(GameState.player.statusEffects.strength, card.consumeStrength);
+        GameState.player.statusEffects.strength -= consumed;
+        addLog(card.name, `消耗 ${consumed} 层力量`);
       }
 
-      // 单段攻击也附带状态效果（非多段的情况）
-      if (hits === 1 && card.statusEffect) {
-        const statusDesc = describeStatusEffect(card.statusEffect);
-        if (statusDesc) {
-          addLog(card.name, `施加${statusDesc}`);
-          spawnFloatingText(scene, 'enemy', statusDesc, '#ffaa00', -30, '14px');
-        }
+      // 自伤效果（伤害类卡牌，如核心熔毁）
+      if (card.selfDamage) {
+        GameState.player.hp = Math.max(0, GameState.player.hp - card.selfDamage);
+        addLog(card.name, `失去 ${card.selfDamage} 点生命`);
+        spawnFloatingText(scene, 'player', `-${card.selfDamage} HP`, '#ff4444', -20);
+        spawnHitParticles(scene, LAYOUT.playerX, LAYOUT.playerY, 0xff3300, 12, { speed: 160 });
+        flashEntity(scene, playerSprite, 0xff0000);
+        shakePlayerUI(scene, 'medium');
+        flashScreen(scene, 0xff0000, 0.2);
       }
-    }
 
-    // 吸血效果：恢复等于造成的伤害
-    if (card.lifesteal) {
-      const healAmount = GameState.player.relics.some(r => r.id === RELICS.marsAncientRune.id)
-        ? totalDamage * 2 : totalDamage;
-      const actualHeal = Math.min(healAmount, GameState.player.maxHp - GameState.player.hp);
-      GameState.player.hp += actualHeal;
-      addLog(card.name, `吸血恢复 ${actualHeal} 点生命`);
-      spawnFloatingText(scene, 'player', `+${actualHeal} 吸血`, '#cc3344', -20, '16px');
-      spawnHealParticles(scene, LAYOUT.playerX, LAYOUT.playerY, 0xcc3344, 8);
-    }
+      // 检查 Boss 阶段切换
+      if (GameState.enemy.isAlive && GameState.enemy.checkPhaseTransition()) {
+        addLog('系统', `⚠ ${GameState.enemy.name} 进入狂暴状态！⚠`);
+        spawnFloatingText(scene, 'enemy', '狂暴化！', '#ff00ff', -50, '24px');
+        shakeScreen(scene, 'heavy');
+        flashScreen(scene, 0xff00ff, 0.35, 300);
+        // Boss 狂暴粒子爆发
+        spawnHitParticles(scene, LAYOUT.enemyX, LAYOUT.enemyY, 0xff00ff, 30, { speed: 280 });
+        flashEntity(scene, enemySprite, 0xff00ff);
+      }
 
-    // 消耗力量层数
-    if (card.consumeStrength) {
-      const consumed = Math.min(GameState.player.statusEffects.strength, card.consumeStrength);
-      GameState.player.statusEffects.strength -= consumed;
-      addLog(card.name, `消耗 ${consumed} 层力量`);
-    }
-
-    // 自伤效果（伤害类卡牌，如核心熔毁）
-    if (card.selfDamage) {
-      GameState.player.hp = Math.max(0, GameState.player.hp - card.selfDamage);
-      addLog(card.name, `失去 ${card.selfDamage} 点生命`);
-      spawnFloatingText(scene, 'player', `-${card.selfDamage} HP`, '#ff4444', -20);
-      spawnHitParticles(scene, LAYOUT.playerX, LAYOUT.playerY, 0xff3300, 12, { speed: 160 });
-      flashEntity(scene, playerSprite, 0xff0000);
-      shakePlayerUI(scene, 'medium');
-      flashScreen(scene, 0xff0000, 0.2);
-    }
-
-    // 检查 Boss 阶段切换
-    if (GameState.enemy.isAlive && GameState.enemy.checkPhaseTransition()) {
-      addLog('系统', `⚠ ${GameState.enemy.name} 进入狂暴状态！⚠`);
-      spawnFloatingText(scene, 'enemy', '狂暴化！', '#ff00ff', -50, '24px');
-      shakeScreen(scene, 'heavy');
-      flashScreen(scene, 0xff00ff, 0.35, 300);
-      // Boss 狂暴粒子爆发
-      spawnHitParticles(scene, LAYOUT.enemyX, LAYOUT.enemyY, 0xff00ff, 30, { speed: 280 });
-      flashEntity(scene, enemySprite, 0xff00ff);
-    }
+      refreshUI(scene);
+    });
   } else if (card.type === 'shield') {
     let shieldAmount = card.value;
 
@@ -5130,15 +5151,23 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
       addLog(card.name, `抽取 ${baseDraw + bonusDraw} 张牌${bonusDraw > 0 ? '（条件满足）' : ''}`);
     }
 
-    // 施加状态效果（对敌人）
+    // 施加状态效果（selfTarget 给自己，否则给敌人）
     if (card.statusEffect && !card.statusEffectAction) {
       const effects = Array.isArray(card.statusEffect) ? card.statusEffect : [card.statusEffect];
-      for (const eff of effects) {
-        GameState.enemy.addStatus(eff.type, eff.stacks);
-      }
       const statusDesc = describeStatusEffect(card.statusEffect);
-      addLog(card.name, `对 ${GameState.enemy.name} 施加${statusDesc}`);
-      spawnFloatingText(scene, 'enemy', statusDesc, '#ffaa00', -30, '14px');
+      if (card.selfTarget) {
+        for (const eff of effects) {
+          GameState.player.addStatus(eff.type, eff.stacks);
+        }
+        addLog(card.name, `获得${statusDesc}`);
+        spawnFloatingText(scene, 'player', statusDesc, '#ff44ff', -30, '14px');
+      } else {
+        for (const eff of effects) {
+          GameState.enemy.addStatus(eff.type, eff.stacks);
+        }
+        addLog(card.name, `对 ${GameState.enemy.name} 施加${statusDesc}`);
+        spawnFloatingText(scene, 'enemy', statusDesc, '#ffaa00', -30, '14px');
+      }
     }
 
     // 自伤效果（特殊类卡牌，如超频过载）
@@ -5165,7 +5194,11 @@ function playCard(scene, index, cardContainer, cardX, cardY) {
   GameState.hand.splice(index, 1);
   GameState.discardPile.push(card);
 
-  scene.time.delayedCall(100, () => {
+  // 多段攻击需要等全部伤害结算完再检查敌人是否死亡
+  const isMultiHit = card.type === 'damage' && (card.hits || 1) > 1;
+  const checkDelay = isMultiHit ? ((card.hits || 1) * 150 + 150) : 100;
+
+  scene.time.delayedCall(checkDelay, () => {
     refreshUI(scene);
     if (!GameState.enemy.isAlive) {
       renderHand(scene);
